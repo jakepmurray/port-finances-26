@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Team Finance Portal</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+:root {
+  --navy: #1A3A5C;
+  --navy-light: #D6E4F0;
+  --gold: #C9A227;
+  --green: #1a7a3c;
+  --red: #a32d2d;
+  --bg: #f7f9fc;
+  --card: #ffffff;
+  --border: #e2e8f0;
+  --text: #1e293b;
+  --muted: #64748b;
+  --radius: 12px;
+  --shadow: 0 1px 3px rgba(0,0,0,.08), 0 4px 16px rgba(0,0,0,.06);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+/* ── LOGIN ── */
+#login-screen {
+  min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, var(--navy) 0%, #2d5f8a 100%);
+}
+.login-card {
+  background: var(--card); border-radius: 20px; padding: 2.5rem 2rem;
+  width: 360px; box-shadow: 0 20px 60px rgba(0,0,0,.25); text-align: center;
+}
+.login-logo { font-size: 48px; margin-bottom: .5rem; }
+.login-card h1 { font-size: 22px; color: var(--navy); margin-bottom: .25rem; font-weight: 700; }
+.login-card p { font-size: 13px; color: var(--muted); margin-bottom: 1.75rem; }
+.login-card input {
+  width: 100%; padding: 12px 16px; border: 1.5px solid var(--border); border-radius: 10px;
+  font-size: 15px; letter-spacing: .15em; text-align: center; margin-bottom: 1rem;
+  background: #f8fafc; transition: border .2s;
+}
+.login-card input:focus { outline: none; border-color: var(--navy); background: #fff; }
+.login-btn {
+  width: 100%; padding: 13px; border: none; border-radius: 10px; font-size: 15px;
+  font-weight: 600; cursor: pointer; background: var(--navy); color: #fff; transition: opacity .2s;
+}
+.login-btn:hover { opacity: .88; }
+.login-error { font-size: 13px; color: var(--red); margin-top: .75rem; min-height: 20px; }
+.login-hint { font-size: 12px; color: var(--muted); margin-top: 1.25rem; }
+
+/* ── APP SHELL ── */
+#app { display: none; }
+header {
+  background: var(--navy); color: #fff; padding: 0 1.5rem;
+  display: flex; align-items: center; justify-content: space-between; height: 58px;
+  position: sticky; top: 0; z-index: 100;
+}
+.header-left { display: flex; align-items: center; gap: 10px; }
+.header-left span { font-size: 22px; }
+.header-left h2 { font-size: 16px; font-weight: 600; }
+.header-right { display: flex; align-items: center; gap: 12px; font-size: 13px; }
+.tier-badge {
+  padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 700;
+  letter-spacing: .05em; background: var(--gold); color: #fff;
+}
+.signout-btn {
+  background: rgba(255,255,255,.15); border: none; color: #fff; padding: 5px 12px;
+  border-radius: 8px; cursor: pointer; font-size: 12px; transition: background .2s;
+}
+.signout-btn:hover { background: rgba(255,255,255,.25); }
+
+nav {
+  background: var(--card); border-bottom: 1px solid var(--border);
+  display: flex; padding: 0 1.5rem; overflow-x: auto; gap: 0;
+}
+.nav-tab {
+  padding: 14px 18px; font-size: 13px; font-weight: 500; cursor: pointer;
+  border: none; background: transparent; color: var(--muted);
+  border-bottom: 2.5px solid transparent; white-space: nowrap; transition: color .15s;
+}
+.nav-tab:hover { color: var(--text); }
+.nav-tab.active { color: var(--navy); border-bottom-color: var(--navy); font-weight: 600; }
+
+main { padding: 1.5rem; max-width: 1100px; margin: 0 auto; }
+
+/* ── CARDS ── */
+.stat-grid { display: grid; gap: 12px; margin-bottom: 1.5rem; }
+.stat-grid.cols-4 { grid-template-columns: repeat(4, minmax(0,1fr)); }
+.stat-grid.cols-3 { grid-template-columns: repeat(3, minmax(0,1fr)); }
+.stat-grid.cols-2 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+.stat-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 1rem 1.25rem; box-shadow: var(--shadow);
+}
+.stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 6px; }
+.stat-value { font-size: 26px; font-weight: 700; color: var(--text); }
+.stat-value.green { color: var(--green); }
+.stat-value.red { color: var(--red); }
+.stat-value.navy { color: var(--navy); }
+.stat-sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+.card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem; box-shadow: var(--shadow); margin-bottom: 1.25rem; }
+.card-title { font-size: 14px; font-weight: 600; color: var(--navy); margin-bottom: 1rem; display: flex; align-items: center; gap: 8px; }
+
+/* ── TABLE ── */
+.table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid var(--border); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { background: #f1f5f9; padding: 10px 14px; text-align: left; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; border-bottom: 1px solid var(--border); white-space: nowrap; }
+td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text); vertical-align: middle; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: #f8fafc; }
+.empty-row td { text-align: center; color: var(--muted); padding: 2rem; font-size: 13px; }
+
+/* ── BADGES ── */
+.badge { display: inline-block; padding: 3px 9px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+.badge-green { background: #dcfce7; color: #166534; }
+.badge-red { background: #fee2e2; color: #991b1b; }
+.badge-amber { background: #fef3c7; color: #92400e; }
+.badge-blue { background: #dbeafe; color: #1e40af; }
+.badge-gray { background: #f1f5f9; color: #475569; }
+.badge-navy { background: var(--navy-light); color: var(--navy); }
+
+/* ── PERSONAL BALANCE CARD ── */
+.balance-hero {
+  background: var(--navy); color: #fff; border-radius: 16px; padding: 2rem;
+  margin-bottom: 1.25rem; text-align: center;
+}
+.balance-hero .amount { font-size: 48px; font-weight: 800; margin: .5rem 0; }
+.balance-hero .label { font-size: 14px; opacity: .75; }
+.balance-hero.owed { background: linear-gradient(135deg, #991b1b, #dc2626); }
+.balance-hero.clear { background: linear-gradient(135deg, #166534, #16a34a); }
+.balance-hero.credit { background: linear-gradient(135deg, #1e40af, #2563eb); }
+
+/* ── PROGRESS BAR ── */
+.progress-wrap { margin-bottom: 1rem; }
+.progress-label { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.progress-track { height: 8px; background: #e2e8f0; border-radius: 4px; overflow: hidden; }
+.progress-fill { height: 100%; border-radius: 4px; transition: width .5s ease; }
+
+/* ── LOADING ── */
+#loading { display: none; position: fixed; inset: 0; background: rgba(26,58,92,.7); z-index: 200; align-items: center; justify-content: center; flex-direction: column; gap: 16px; color: #fff; font-size: 15px; }
+.spinner { width: 40px; height: 40px; border: 3px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.section { display: none; }
+.section.active { display: block; }
+
+.refresh-btn { background: none; border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; font-size: 12px; color: var(--muted); cursor: pointer; display: flex; align-items: center; gap: 5px; transition: all .2s; }
+.refresh-btn:hover { background: var(--bg); color: var(--text); }
+
+.alert { padding: .85rem 1rem; border-radius: 10px; font-size: 13px; margin-bottom: 1rem; }
+.alert-warn { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
+.alert-info { background: #dbeafe; color: #1e40af; border: 1px solid #93c5fd; }
+
+@media (max-width: 640px) {
+  .stat-grid.cols-4 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .stat-grid.cols-3 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  main { padding: 1rem; }
+}
+</style>
+</head>
+<body>
+
+<!-- Loading overlay -->
+<div id="loading" style="display:flex">
+  <div class="spinner"></div>
+  <span>Loading team data…</span>
+</div>
+
+<!-- Login -->
+<div id="login-screen">
+  <div class="login-card">
+    <div class="login-logo">🥏</div>
+    <h1>Team Finance Portal</h1>
+    <p>Enter your personal access code to view your account</p>
+    <input type="text" id="code-input" placeholder="YOUR CODE" maxlength="20"
+           onkeydown="if(event.key==='Enter')tryLogin()" autocomplete="off" autocapitalize="characters">
+    <button class="login-btn" onclick="tryLogin()">Sign In</button>
+    <div class="login-error" id="login-error"></div>
+    <div class="login-hint">Your code was provided by your team treasurer.<br>Contact them if you need help.</div>
+  </div>
+</div>
+
+<!-- App -->
+<div id="app">
+  <header>
+    <div class="header-left">
+      <span>🥏</span>
+      <h2 id="header-team-name">Team Finance Portal</h2>
+    </div>
+    <div class="header-right">
+      <span id="header-user">—</span>
+      <span class="tier-badge" id="header-tier">—</span>
+      <button class="signout-btn" onclick="signOut()">Sign out</button>
+    </div>
+  </header>
+
+  <nav id="main-nav"></nav>
+
+  <main>
+    <!-- PLAYER VIEW -->
+    <div id="section-mybalance" class="section">
+      <div id="balance-hero-wrap"></div>
+      <div class="stat-grid cols-3" id="player-stats"></div>
+      <div class="card">
+        <div class="card-title">📅 My Event History</div>
+        <div class="table-wrap">
+          <table><thead><tr><th>Event</th><th>Date</th><th>Type</th><th>Attended</th><th>My Cost</th></tr></thead>
+          <tbody id="player-events-tbody"></tbody></table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ROSTER -->
+    <div id="section-roster" class="section">
+      <div class="stat-grid cols-4" id="roster-stats"></div>
+      <div class="card">
+        <div class="card-title" style="justify-content:space-between">
+          <span>👥 Player Roster & Balances</span>
+          <button class="refresh-btn" onclick="loadData()">↺ Refresh</button>
+        </div>
+        <div class="table-wrap">
+          <table><thead><tr><th>Player</th><th>Role</th><th>Dues</th><th>Status</th><th>Net Balance</th><th>Standing</th></tr></thead>
+          <tbody id="roster-tbody"></tbody></table>
+        </div>
+      </div>
+    </div>
+
+    <!-- EVENTS -->
+    <div id="section-events" class="section">
+      <div class="stat-grid cols-4" id="events-stats"></div>
+      <div class="card">
+        <div class="card-title">📋 All Events</div>
+        <div class="table-wrap">
+          <table><thead><tr><th>Event</th><th>Date</th><th>Type</th><th>Location</th><th>Budgeted</th><th>Actual</th><th>Variance</th></tr></thead>
+          <tbody id="events-tbody"></tbody></table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ATTENDANCE -->
+    <div id="section-attendance" class="section">
+      <div class="card">
+        <div class="card-title">✅ Attendance Summary</div>
+        <div class="table-wrap" id="attendance-table-wrap">
+          <table><thead id="att-head"></thead><tbody id="att-tbody"></tbody></table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TRANSACTIONS -->
+    <div id="section-transactions" class="section">
+      <div class="stat-grid cols-3" id="tx-stats"></div>
+      <div class="card">
+        <div class="card-title">💳 All Transactions</div>
+        <div class="table-wrap">
+          <table><thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Type</th><th>Amount</th><th>Status</th></tr></thead>
+          <tbody id="tx-tbody"></tbody></table>
+        </div>
+      </div>
+    </div>
+
+    <!-- DASHBOARD (Coach/Treasurer) -->
+    <div id="section-dashboard" class="section">
+      <div class="stat-grid cols-4" id="dash-stats"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.25rem" id="dash-lower">
+        <div class="card">
+          <div class="card-title">💰 Financial Overview</div>
+          <div id="dash-finance"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">📊 Events Overview</div>
+          <div id="dash-events"></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">🏆 Player Balance Summary</div>
+        <div class="table-wrap">
+          <table><thead><tr><th>Player</th><th>Role</th><th>Dues Owed</th><th>Dues Paid</th><th>Event Costs</th><th>Paid Upfront</th><th>Net</th><th>Status</th></tr></thead>
+          <tbody id="dash-balances-tbody"></tbody></table>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+// ── CONFIG ──────────────────────────────────────────────────────────
+// IMPORTANT: Update this URL to point to your Excel file in your GitHub repo
+// Format: https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/finance_data.xlsx
+const EXCEL_URL = 'finance_data.xlsx';
+
+// Access tiers: role values from Roster sheet that map to each tier
+const TIER_MAP = {
+  coach:    ['Coach','Treasurer','Manager'],
+  captain:  ['Captain'],
+  player:   ['Player'],
+};
+
+// ── STATE ────────────────────────────────────────────────────────────
+let DATA = {};       // parsed sheets
+let USER = null;     // { name, code, role, tier, rowData }
+
+// ── UTILS ────────────────────────────────────────────────────────────
+const fmt$ = v => {
+  if (v === null || v === undefined || v === '') return '—';
+  const n = parseFloat(v);
+  if (isNaN(n)) return '—';
+  const abs = Math.abs(n).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+  return (n < 0 ? '-$' : '$') + abs;
+};
+const fmtDate = v => {
+  if (!v) return '—';
+  if (typeof v === 'number') {
+    // Excel serial date
+    const d = new Date(Math.round((v - 25569) * 86400 * 1000));
+    return d.toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'});
+  }
+  return String(v);
+};
+const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+function balanceBadge(n) {
+  if (isNaN(n) || n === null) return '<span class="badge badge-gray">—</span>';
+  if (Math.abs(n) < 0.5) return '<span class="badge badge-green">Settled</span>';
+  if (n > 0) return '<span class="badge badge-red">Owes $'+Math.abs(n).toFixed(2)+'</span>';
+  return '<span class="badge badge-blue">Credit $'+Math.abs(n).toFixed(2)+'</span>';
+}
+function statusBadge(s) {
+  const map = {
+    'Paid':'badge-green','Unpaid':'badge-red','Partial':'badge-amber','Waived':'badge-gray',
+    'Active':'badge-green','Inactive':'badge-gray','Alumni':'badge-navy',
+    'Cleared':'badge-green','Pending':'badge-amber','Disputed':'badge-red',
+    'Settled':'badge-green','Unsettled':'badge-red',
+    'Y':'badge-green','N':'badge-red','E':'badge-amber',
+  };
+  const cls = map[s] || 'badge-gray';
+  return `<span class="badge ${cls}">${esc(s||'—')}</span>`;
+}
+
+// ── LOAD EXCEL ────────────────────────────────────────────────────────
+async function loadData() {
+  showLoading(true);
+  try {
+    const resp = await fetch(EXCEL_URL + '?t=' + Date.now());
+    if (!resp.ok) throw new Error('Could not load finance_data.xlsx (HTTP ' + resp.status + ')');
+    const buf = await resp.arrayBuffer();
+    const wb = XLSX.read(buf, {type:'array', cellDates:false});
+
+    DATA = {};
+    wb.SheetNames.forEach(name => {
+      DATA[name] = XLSX.utils.sheet_to_json(wb.Sheets[name], {defval:'', raw:true});
+    });
+
+    if (USER) renderCurrentView();
+  } catch(e) {
+    alert('Failed to load data: ' + e.message + '\n\nMake sure finance_data.xlsx is in the same folder as index.html in your GitHub repo.');
+  } finally {
+    showLoading(false);
+  }
+}
+
+// ── AUTH ──────────────────────────────────────────────────────────────
+function tryLogin() {
+  const code = document.getElementById('code-input').value.trim().toUpperCase();
+  if (!code) return;
+
+  const roster = DATA['Roster'] || [];
+  // Skip header rows (rows where col 0 is a section label like "Total Players")
+  const players = roster.filter(r => {
+    const name = String(r['Full Name'] || r['__EMPTY'] || Object.values(r)[0] || '').trim();
+    const accessCode = String(r['Access Code'] || Object.values(r)[1] || '').trim().toUpperCase();
+    return accessCode === code && name;
+  });
+
+  if (players.length === 0) {
+    document.getElementById('login-error').textContent = 'Code not found. Check with your treasurer.';
+    return;
+  }
+
+  const p = players[0];
+  const name = String(p['Full Name'] || Object.values(p)[0] || '').trim();
+  const role = String(p['Role'] || '').trim();
+
+  let tier = 'player';
+  if (TIER_MAP.coach.includes(role)) tier = 'coach';
+  else if (TIER_MAP.captain.includes(role)) tier = 'captain';
+
+  USER = { name, code, role, tier, row: p };
+  document.getElementById('login-error').textContent = '';
+
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  document.getElementById('loading').style.display = 'none';
+
+  setupNav();
+  renderCurrentView();
+}
+
+function signOut() {
+  USER = null;
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('code-input').value = '';
+}
+
+// ── NAV ────────────────────────────────────────────────────────────────
+const TABS = {
+  player:  [['mybalance','🥏 My Balance']],
+  captain: [['roster','👥 Roster'],['events','📋 Events'],['attendance','✅ Attendance']],
+  coach:   [['dashboard','📊 Dashboard'],['roster','👥 Roster'],['events','📋 Events'],['attendance','✅ Attendance'],['transactions','💳 Transactions']],
+};
+
+let currentSection = null;
+function setupNav() {
+  const tier = USER.tier;
+  document.getElementById('header-user').textContent = USER.name;
+  document.getElementById('header-tier').textContent = USER.role;
+
+  const tabs = tier === 'player'
+    ? TABS.player
+    : tier === 'captain'
+      ? TABS.captain
+      : TABS.coach;
+
+  const nav = document.getElementById('main-nav');
+  nav.innerHTML = tabs.map(([id,label]) =>
+    `<button class="nav-tab" onclick="showSection('${id}')">${label}</button>`
+  ).join('');
+
+  showSection(tabs[0][0]);
+}
+
+function showSection(id) {
+  currentSection = id;
+  document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(t => {
+    if (t.textContent.includes(id === 'mybalance' ? 'Balance' : id.charAt(0).toUpperCase()+id.slice(1)))
+      t.classList.add('active');
+  });
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  const el = document.getElementById('section-'+id);
+  if (el) el.classList.add('active');
+  renderSection(id);
+}
+
+function renderCurrentView() { if (currentSection) renderSection(currentSection); }
+
+function renderSection(id) {
+  if (!DATA['Roster']) return;
+  const renders = {
+    mybalance:    renderMyBalance,
+    roster:       renderRoster,
+    events:       renderEvents,
+    attendance:   renderAttendance,
+    transactions: renderTransactions,
+    dashboard:    renderDashboard,
+  };
+  if (renders[id]) renders[id]();
+}
+
+// ── PARSE HELPERS ─────────────────────────────────────────────────────
+function getRosterRows() {
+  return (DATA['Roster'] || []).filter(r => {
+    const name = String(r['Full Name'] || Object.values(r)[0] || '').trim();
+    const code = String(r['Access Code'] || Object.values(r)[1] || '').trim();
+    return name && code && !['Full Name','Total Players','TOTAL'].includes(name);
+  });
+}
+function getEventsRows() {
+  return (DATA['Events'] || []).filter(r => {
+    const name = String(r['Event Name'] || Object.values(r)[0] || '').trim();
+    return name && !['Event Name','EVENTS','Total Events'].includes(name);
+  });
+}
+function getTxRows() {
+  return (DATA['Transactions'] || []).filter(r => {
+    const desc = String(r['Description'] || Object.values(r)[1] || '').trim();
+    return desc && !['Description','TRANSACTIONS'].includes(desc);
+  });
+}
+function getBalanceRows() {
+  return (DATA['Player Balances'] || []).filter(r => {
+    const name = String(r['Player Name'] || Object.values(r)[0] || '').trim();
+    return name && !['Player Name','PLAYER'].includes(name);
+  });
+}
+
+// ── MY BALANCE (player view) ───────────────────────────────────────────
+function renderMyBalance() {
+  const balRows = getBalanceRows();
+  const myBal = balRows.find(r =>
+    String(r['Access Code'] || Object.values(r)[1] || '').trim().toUpperCase() === USER.code
+  );
+
+  let net = 0, duesOwed = 0, duesPaid = 0, eventCosts = 0, paidUpfront = 0, standing = '';
+  if (myBal) {
+    duesOwed    = parseFloat(myBal['Dues Owed'] || Object.values(myBal)[2]) || 0;
+    duesPaid    = parseFloat(myBal['Dues Paid'] || Object.values(myBal)[3]) || 0;
+    eventCosts  = parseFloat(myBal['Event Costs Owed'] || Object.values(myBal)[4]) || 0;
+    paidUpfront = parseFloat(myBal['Paid Upfront For Team'] || Object.values(myBal)[5]) || 0;
+    net         = parseFloat(myBal['Net Balance'] || Object.values(myBal)[6]) || 0;
+    standing    = String(myBal['Status'] || Object.values(myBal)[7] || '').trim();
+  }
+
+  const heroClass = Math.abs(net) < 0.5 ? 'clear' : net > 0 ? 'owed' : 'credit';
+  const heroLabel = Math.abs(net) < 0.5 ? 'You\'re all settled up! 🎉'
+    : net > 0 ? 'You owe the team'
+    : 'The team owes you';
+
+  document.getElementById('balance-hero-wrap').innerHTML = `
+    <div class="balance-hero ${heroClass}">
+      <div class="label">${esc(heroLabel)}</div>
+      <div class="amount">${fmt$(Math.abs(net))}</div>
+      <div class="label">Status: ${esc(standing || '—')}</div>
+    </div>`;
+
+  document.getElementById('player-stats').innerHTML = `
+    <div class="stat-card"><div class="stat-label">Dues owed</div><div class="stat-value">${fmt$(duesOwed)}</div></div>
+    <div class="stat-card"><div class="stat-label">Dues paid</div><div class="stat-value green">${fmt$(duesPaid)}</div></div>
+    <div class="stat-card"><div class="stat-label">Dues remaining</div><div class="stat-value ${duesOwed-duesPaid>0?'red':'green'}">${fmt$(duesOwed-duesPaid)}</div></div>`;
+
+  // Dues progress bar
+  const pct = duesOwed > 0 ? Math.min(100, Math.round(duesPaid/duesOwed*100)) : 100;
+  const progressHtml = `
+    <div class="card">
+      <div class="card-title">💵 Dues Progress</div>
+      <div class="progress-wrap">
+        <div class="progress-label"><span>Paid ${fmt$(duesPaid)} of ${fmt$(duesOwed)}</span><span>${pct}%</span></div>
+        <div class="progress-track"><div class="progress-fill" style="width:${pct}%;background:${pct===100?'var(--green)':'var(--gold)'}"></div></div>
+      </div>
+    </div>`;
+
+  // Find attendance rows for this player
+  const attSheet = DATA['Attendance'] || [];
+  const myAttRow = attSheet.find(r =>
+    String(r['Access Code'] || Object.values(r)[1] || '').trim().toUpperCase() === USER.code
+  );
+  const evtRows = getEventsRows();
+  const evtHeaders = attSheet.length > 0
+    ? Object.keys(attSheet[0]).filter(k => !['Full Name','Access Code'].includes(k) && !k.startsWith('__'))
+    : [];
+
+  let evtBodyHtml = '';
+  if (myAttRow && evtRows.length > 0) {
+    evtRows.slice(0, 30).forEach((evt, idx) => {
+      const evtName = String(evt['Event Name'] || Object.values(evt)[0] || '').trim();
+      const evtDate = fmtDate(evt['Date'] || Object.values(evt)[1]);
+      const evtCat  = String(evt['Category'] || Object.values(evt)[2] || '').trim();
+      const evtActual = parseFloat(evt['Actual Cost ($)'] || Object.values(evt)[6]) || 0;
+      // attendance value: headers in att sheet match event names or Event N
+      const attKey = evtHeaders[idx] || `Event ${idx+1}`;
+      const attVal = String(myAttRow[attKey] || '').trim().toUpperCase() || '—';
+      const costShare = attVal === 'Y' && evtActual > 0
+        ? fmt$(evtActual / Math.max(1, parseInt(evt['# Expected'] || Object.values(evt)[4]) || 1))
+        : '—';
+      evtBodyHtml += `<tr>
+        <td>${esc(evtName)}</td><td>${esc(evtDate)}</td>
+        <td><span class="badge badge-navy">${esc(evtCat)}</span></td>
+        <td>${statusBadge(attVal)}</td>
+        <td>${costShare}</td></tr>`;
+    });
+  }
+  if (!evtBodyHtml) evtBodyHtml = '<tr class="empty-row"><td colspan="5">No event history yet</td></tr>';
+
+  document.getElementById('player-events-tbody').innerHTML = evtBodyHtml;
+
+  // Insert progress bar before event card
+  const section = document.getElementById('section-mybalance');
+  let progCard = document.getElementById('dues-progress-card');
+  if (!progCard) {
+    progCard = document.createElement('div');
+    progCard.id = 'dues-progress-card';
+    section.insertBefore(progCard, document.querySelector('#section-mybalance .card'));
+  }
+  progCard.innerHTML = progressHtml;
+}
+
+// ── ROSTER ─────────────────────────────────────────────────────────────
+function renderRoster() {
+  const rows = getRosterRows();
+  const active = rows.filter(r => String(r['Status']||Object.values(r)[7]||'').trim() === 'Active');
+  const coaches = rows.filter(r => TIER_MAP.coach.includes(String(r['Role']||Object.values(r)[6]||'').trim()));
+  const captains = rows.filter(r => TIER_MAP.captain.includes(String(r['Role']||Object.values(r)[6]||'').trim()));
+
+  document.getElementById('roster-stats').innerHTML = `
+    <div class="stat-card"><div class="stat-label">Total players</div><div class="stat-value navy">${rows.length}</div></div>
+    <div class="stat-card"><div class="stat-label">Active</div><div class="stat-value green">${active.length}</div></div>
+    <div class="stat-card"><div class="stat-label">Coaches / staff</div><div class="stat-value">${coaches.length}</div></div>
+    <div class="stat-card"><div class="stat-label">Captains</div><div class="stat-value">${captains.length}</div></div>`;
+
+  const balRows = getBalanceRows();
+  const showBalance = USER.tier === 'coach';
+
+  let html = '';
+  rows.forEach(r => {
+    const name  = String(r['Full Name'] || Object.values(r)[0] || '').trim();
+    const role  = String(r['Role'] || Object.values(r)[6] || '').trim();
+    const dues  = parseFloat(r['Dues Amount'] || Object.values(r)[4]) || 0;
+    const paidS = String(r['Dues Paid?'] || Object.values(r)[5] || '').trim();
+    const stat  = String(r['Status'] || Object.values(r)[7] || '').trim();
+
+    let netHtml = '—';
+    if (showBalance) {
+      const balRow = balRows.find(b => String(b['Player Name']||Object.values(b)[0]||'').trim() === name);
+      if (balRow) {
+        const net = parseFloat(balRow['Net Balance'] || Object.values(balRow)[6]) || 0;
+        netHtml = `<span style="font-weight:600;color:${Math.abs(net)<0.5?'var(--green)':net>0?'var(--red)':'var(--navy)'}">${fmt$(net)}</span>`;
+      }
+    }
+
+    html += `<tr>
+      <td><strong>${esc(name)}</strong></td>
+      <td><span class="badge badge-navy">${esc(role||'—')}</span></td>
+      <td>${fmt$(dues)}</td>
+      <td>${statusBadge(paidS)}</td>
+      ${showBalance ? `<td>${netHtml}</td><td>${balanceBadge(parseFloat((balRows.find(b=>String(b['Player Name']||Object.values(b)[0]||'').trim()===name)||{})['Net Balance']||''))}</td>` : ''}
+    </tr>`;
+  });
+  if (!html) html = '<tr class="empty-row"><td colspan="6">No roster data found</td></tr>';
+
+  // Adjust headers
+  const thead = document.querySelector('#section-roster thead tr');
+  if (thead) {
+    thead.innerHTML = '<th>Player</th><th>Role</th><th>Dues</th><th>Dues Status</th>'
+      + (showBalance ? '<th>Net Balance</th><th>Standing</th>' : '');
+  }
+  document.getElementById('roster-tbody').innerHTML = html;
+}
+
+// ── EVENTS ─────────────────────────────────────────────────────────────
+function renderEvents() {
+  const rows = getEventsRows();
+  const totalBudget = rows.reduce((s,r) => s + (parseFloat(r['Budgeted Cost ($)']||Object.values(r)[5])||0), 0);
+  const totalActual = rows.reduce((s,r) => s + (parseFloat(r['Actual Cost ($)']||Object.values(r)[6])||0), 0);
+  const tourns = rows.filter(r => String(r['Category']||Object.values(r)[2]||'').trim() === 'Tournament').length;
+  const pracs  = rows.filter(r => String(r['Category']||Object.values(r)[2]||'').trim() === 'Practice').length;
+
+  document.getElementById('events-stats').innerHTML = `
+    <div class="stat-card"><div class="stat-label">Total events</div><div class="stat-value navy">${rows.length}</div></div>
+    <div class="stat-card"><div class="stat-label">Tournaments</div><div class="stat-value">${tourns}</div></div>
+    <div class="stat-card"><div class="stat-label">Practices</div><div class="stat-value">${pracs}</div></div>
+    <div class="stat-card"><div class="stat-label">Budget variance</div><div class="stat-value ${totalBudget-totalActual>=0?'green':'red'}">${fmt$(totalBudget-totalActual)}</div></div>`;
+
+  const catColors = {
+    'Tournament':'badge-navy','Practice':'badge-green','Hotel':'badge-amber',
+    'Travel':'badge-blue','Fundraiser':'badge-green','Team Meal':'badge-gray','Other':'badge-gray',
+  };
+  let html = '';
+  rows.forEach(r => {
+    const name    = String(r['Event Name']||Object.values(r)[0]||'').trim();
+    const date    = fmtDate(r['Date']||Object.values(r)[1]);
+    const cat     = String(r['Category']||Object.values(r)[2]||'').trim();
+    const loc     = String(r['Location']||Object.values(r)[3]||'').trim();
+    const budget  = parseFloat(r['Budgeted Cost ($)']||Object.values(r)[5]) || 0;
+    const actual  = parseFloat(r['Actual Cost ($)']||Object.values(r)[6]) || 0;
+    const variance= budget - actual;
+    html += `<tr>
+      <td><strong>${esc(name)}</strong>${loc ? `<br><span style="font-size:11px;color:var(--muted)">${esc(loc)}</span>` : ''}</td>
+      <td>${esc(date)}</td>
+      <td><span class="badge ${catColors[cat]||'badge-gray'}">${esc(cat)}</span></td>
+      <td>${esc(loc||'—')}</td>
+      <td>${fmt$(budget)}</td>
+      <td>${fmt$(actual)}</td>
+      <td style="font-weight:600;color:${variance>=0?'var(--green)':'var(--red)'}">${variance>=0?'+':''}${fmt$(variance)}</td>
+    </tr>`;
+  });
+  if (!html) html = '<tr class="empty-row"><td colspan="7">No events found</td></tr>';
+  document.getElementById('events-tbody').innerHTML = html;
+}
+
+// ── ATTENDANCE ─────────────────────────────────────────────────────────
+function renderAttendance() {
+  const attSheet = DATA['Attendance'] || [];
+  if (!attSheet.length) {
+    document.getElementById('att-head').innerHTML = '<tr><th>No attendance data</th></tr>';
+    document.getElementById('att-tbody').innerHTML = '';
+    return;
+  }
+
+  // Find data rows (skip header meta-rows like Date, Category, Cost, Totals)
+  const playerRows = attSheet.filter(r => {
+    const name = String(r['Full Name'] || Object.values(r)[0] || '').trim();
+    const skip = ['Full Name','Date →','Category →','Cost per person ($) →',
+                  'Total Attendees →','Total Cost →','← Player Name','Y = Attended'];
+    return name && !skip.some(s => name.includes(s));
+  });
+
+  const evtCols = Object.keys(attSheet[0] || {}).filter(k =>
+    !['Full Name','Access Code'].includes(k) && !k.startsWith('__')
+  ).slice(0, 20); // limit to 20 events for readability
+
+  const evtRows = getEventsRows();
+
+  let headHtml = '<tr><th>Player</th>';
+  evtCols.forEach((col, i) => {
+    const evt = evtRows[i];
+    const label = evt ? String(evt['Event Name']||Object.values(evt)[0]||col).trim().substring(0,18) : col;
+    headHtml += `<th title="${esc(label)}">${esc(label.length>14?label.substring(0,14)+'…':label)}</th>`;
+  });
+  headHtml += '<th>Attended</th><th>Rate</th></tr>';
+
+  let bodyHtml = '';
+  playerRows.forEach(r => {
+    const name = String(r['Full Name']||Object.values(r)[0]||'').trim();
+    const attended = evtCols.filter(c => String(r[c]||'').trim().toUpperCase() === 'Y').length;
+    const total    = evtCols.filter(c => String(r[c]||'').trim() !== '').length;
+    const rate     = total > 0 ? Math.round(attended/total*100) : 0;
+
+    bodyHtml += `<tr><td><strong>${esc(name)}</strong></td>`;
+    evtCols.forEach(col => {
+      const val = String(r[col]||'').trim().toUpperCase();
+      bodyHtml += `<td style="text-align:center">${val ? statusBadge(val) : '<span style="color:var(--muted)">—</span>'}</td>`;
+    });
+    bodyHtml += `<td style="text-align:center;font-weight:600">${attended}/${total}</td>`;
+    bodyHtml += `<td><div class="progress-track" style="width:60px;display:inline-block"><div class="progress-fill" style="width:${rate}%;background:${rate>=75?'var(--green)':rate>=50?'var(--gold)':'var(--red)'}"></div></div> <span style="font-size:11px">${rate}%</span></td>`;
+    bodyHtml += '</tr>';
+  });
+
+  if (!bodyHtml) bodyHtml = '<tr class="empty-row"><td colspan="20">No attendance data</td></tr>';
+  document.getElementById('att-head').innerHTML = headHtml;
+  document.getElementById('att-tbody').innerHTML = bodyHtml;
+}
+
+// ── TRANSACTIONS ────────────────────────────────────────────────────────
+function renderTransactions() {
+  const rows = getTxRows();
+  const totalIn  = rows.filter(r=>String(r['Type']||Object.values(r)[3]||'').trim()==='Income').reduce((s,r)=>s+(parseFloat(r['Amount ($)']||Object.values(r)[5])||0),0);
+  const totalOut = rows.filter(r=>String(r['Type']||Object.values(r)[3]||'').trim()==='Expense').reduce((s,r)=>s+(parseFloat(r['Amount ($)']||Object.values(r)[5])||0),0);
+
+  document.getElementById('tx-stats').innerHTML = `
+    <div class="stat-card"><div class="stat-label">Total in</div><div class="stat-value green">${fmt$(totalIn)}</div></div>
+    <div class="stat-card"><div class="stat-label">Total out</div><div class="stat-value red">${fmt$(totalOut)}</div></div>
+    <div class="stat-card"><div class="stat-label">Net balance</div><div class="stat-value ${totalIn-totalOut>=0?'green':'red'}">${fmt$(totalIn-totalOut)}</div></div>`;
+
+  let html = '';
+  [...rows].reverse().forEach(r => {
+    const date = fmtDate(r['Date']||Object.values(r)[0]);
+    const desc = String(r['Description']||Object.values(r)[1]||'').trim();
+    const cat  = String(r['Category']||Object.values(r)[2]||'').trim();
+    const type = String(r['Type']||Object.values(r)[3]||'').trim();
+    const amt  = parseFloat(r['Amount ($)']||Object.values(r)[5]) || 0;
+    const stat = String(r['Status']||Object.values(r)[8]||'').trim();
+
+    html += `<tr>
+      <td>${esc(date)}</td><td>${esc(desc)}</td>
+      <td><span class="badge badge-navy">${esc(cat)}</span></td>
+      <td><span class="badge ${type==='Income'?'badge-green':'badge-red'}">${esc(type)}</span></td>
+      <td style="font-weight:600;color:${type==='Income'?'var(--green)':'var(--red)'}">${type==='Income'?'+':'-'}${fmt$(amt)}</td>
+      <td>${statusBadge(stat)}</td>
+    </tr>`;
+  });
+  if (!html) html = '<tr class="empty-row"><td colspan="6">No transactions found</td></tr>';
+  document.getElementById('tx-tbody').innerHTML = html;
+}
+
+// ── DASHBOARD (Coach/Treasurer) ─────────────────────────────────────────
+function renderDashboard() {
+  const dash = DATA['Dashboard'] || [];
+  const get = label => {
+    const row = dash.find(r => String(Object.values(r)[0]||'').trim() === label);
+    return row ? (parseFloat(Object.values(row)[1]) || 0) : 0;
+  };
+
+  const totalPlayers = get('Total Players');
+  const activeP      = get('Active Players');
+  const totalIncome  = get('Total Income');
+  const totalExpense = get('Total Expenses');
+  const net          = get('Net Balance');
+  const totalEvents  = get('Total Events');
+
+  document.getElementById('dash-stats').innerHTML = `
+    <div class="stat-card"><div class="stat-label">Net balance</div><div class="stat-value ${net>=0?'green':'red'}">${fmt$(net)}</div><div class="stat-sub">Season to date</div></div>
+    <div class="stat-card"><div class="stat-label">Total income</div><div class="stat-value green">${fmt$(totalIncome)}</div></div>
+    <div class="stat-card"><div class="stat-label">Total expenses</div><div class="stat-value red">${fmt$(totalExpense)}</div></div>
+    <div class="stat-card"><div class="stat-label">Active players</div><div class="stat-value navy">${Math.round(activeP)} / ${Math.round(totalPlayers)}</div></div>`;
+
+  document.getElementById('dash-finance').innerHTML = `
+    <div class="progress-wrap">
+      <div class="progress-label"><span>Dues collected</span><span>${fmt$(get('Total Dues Collected'))} / ${fmt$(get('Total Dues Owed'))}</span></div>
+      <div class="progress-track"><div class="progress-fill" style="width:${get('Total Dues Owed')>0?Math.min(100,Math.round(get('Total Dues Collected')/get('Total Dues Owed')*100)):0}%;background:var(--green)"></div></div>
+    </div>
+    <div class="progress-wrap" style="margin-top:1rem">
+      <div class="progress-label"><span>Budget used</span><span>${fmt$(get('Total Actual Spend'))} / ${fmt$(get('Total Budgeted'))}</span></div>
+      <div class="progress-track"><div class="progress-fill" style="width:${get('Total Budgeted')>0?Math.min(100,Math.round(get('Total Actual Spend')/get('Total Budgeted')*100)):0}%;background:var(--gold)"></div></div>
+    </div>
+    <div style="margin-top:1.25rem;font-size:13px;color:var(--muted)">
+      <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)"><span>Dues outstanding</span><span style="font-weight:600;color:var(--red)">${fmt$(get('Dues Outstanding'))}</span></div>
+      <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)"><span>Pending transactions</span><span style="font-weight:600">${Math.round(get('Pending Transactions'))}</span></div>
+      <div style="display:flex;justify-content:space-between;padding:6px 0"><span>Budget variance</span><span style="font-weight:600;color:${get('Budget Variance')>=0?'var(--green)':'var(--red)'}">${fmt$(get('Budget Variance'))}</span></div>
+    </div>`;
+
+  document.getElementById('dash-events').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:1rem">
+      ${[['Total',Math.round(get('Total Events')),'navy'],['Tournaments',Math.round(get('Tournaments')),''],['Practices',Math.round(get('Practices')),''],['Fundraisers',Math.round(get('Fundraisers')),'green']].map(([l,v,c])=>`
+        <div style="background:var(--bg);border-radius:8px;padding:.6rem .8rem">
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">${l}</div>
+          <div style="font-size:20px;font-weight:700;color:var(--${c||'text'})">${v}</div>
+        </div>`).join('')}
+    </div>
+    <div style="font-size:13px;color:var(--muted)">
+      <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)"><span>Total budgeted</span><span style="font-weight:600">${fmt$(get('Total Budgeted'))}</span></div>
+      <div style="display:flex;justify-content:space-between;padding:6px 0"><span>Total actual spend</span><span style="font-weight:600">${fmt$(get('Total Actual Spend'))}</span></div>
+    </div>`;
+
+  const balRows = getBalanceRows();
+  let balHtml = '';
+  balRows.forEach(r => {
+    const name      = String(r['Player Name']||Object.values(r)[0]||'').trim();
+    const role      = getRosterRows().find(p=>String(p['Full Name']||Object.values(p)[0]||'').trim()===name);
+    const roleLabel = role ? String(role['Role']||Object.values(role)[6]||'').trim() : '—';
+    const dOwed     = parseFloat(r['Dues Owed']||Object.values(r)[2]) || 0;
+    const dPaid     = parseFloat(r['Dues Paid']||Object.values(r)[3]) || 0;
+    const evtCost   = parseFloat(r['Event Costs Owed']||Object.values(r)[4]) || 0;
+    const upfront   = parseFloat(r['Paid Upfront For Team']||Object.values(r)[5]) || 0;
+    const net       = parseFloat(r['Net Balance']||Object.values(r)[6]) || 0;
+    const status    = String(r['Status']||Object.values(r)[7]||'').trim();
+
+    balHtml += `<tr>
+      <td><strong>${esc(name)}</strong></td>
+      <td><span class="badge badge-navy">${esc(roleLabel)}</span></td>
+      <td>${fmt$(dOwed)}</td>
+      <td>${fmt$(dPaid)}</td>
+      <td>${fmt$(evtCost)}</td>
+      <td>${fmt$(upfront)}</td>
+      <td style="font-weight:700;color:${Math.abs(net)<0.5?'var(--green)':net>0?'var(--red)':'var(--navy)'}">${fmt$(net)}</td>
+      <td>${statusBadge(status)}</td>
+    </tr>`;
+  });
+  if (!balHtml) balHtml = '<tr class="empty-row"><td colspan="8">No balance data</td></tr>';
+  document.getElementById('dash-balances-tbody').innerHTML = balHtml;
+}
+
+function showLoading(show) {
+  document.getElementById('loading').style.display = show ? 'flex' : 'none';
+}
+
+// ── BOOT ────────────────────────────────────────────────────────────────
+loadData().then(() => {
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('login-screen').style.display = 'flex';
+});
+</script>
+</body>
+</html>
