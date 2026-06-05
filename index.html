@@ -333,7 +333,7 @@ function statusBadge(s) {
     'Active':'badge-green','Inactive':'badge-gray','Alumni':'badge-navy',
     'Cleared':'badge-green','Pending':'badge-amber','Disputed':'badge-red',
     'Settled':'badge-green','Unsettled':'badge-red',
-    'Y':'badge-green','N':'badge-red','E':'badge-amber',
+    '1':'badge-green','0':'badge-red','X':'badge-amber',
   };
   const cls = map[s] || 'badge-gray';
   return `<span class="badge ${cls}">${esc(s||'—')}</span>`;
@@ -552,7 +552,7 @@ function renderMyBalance() {
       // attendance value: headers in att sheet match event names or Event N
       const attKey = evtHeaders[idx] || `Event ${idx+1}`;
       const attVal = String(myAttRow[attKey] || '').trim().toUpperCase() || '—';
-      const costShare = attVal === 'Y' && evtActual > 0
+      const costShare = attVal === '1' && evtActual > 0
         ? fmt$(evtActual / Math.max(1, parseInt(evt['# Expected'] || Object.values(evt)[4]) || 1))
         : '—';
       evtBodyHtml += `<tr>
@@ -683,7 +683,7 @@ function renderAttendance() {
   const playerRows = attSheet.filter(r => {
     const name = String(r['Full Name'] || Object.values(r)[0] || '').trim();
     const skip = ['Full Name','Date →','Category →','Cost per person ($) →',
-                  'Total Attendees →','Total Cost →','← Player Name','Y = Attended'];
+                  'Total Attendees →','Total Cost →','← Player Name','1 = Attended'];
     return name && !skip.some(s => name.includes(s));
   });
 

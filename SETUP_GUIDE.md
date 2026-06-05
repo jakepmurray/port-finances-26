@@ -99,10 +99,24 @@ Download https://desktop.github.com — lets you drag-and-drop files and push wi
 
 ---
 
+
+## Hiding the Access Codes sheet
+The **Access Codes** tab is color-coded red so you don't forget it's there.
+
+**Before sharing the file with players:**
+1. Right-click the **Access Codes** tab at the bottom
+2. Click **Hide**
+3. The sheet is now invisible — your codes are safe
+
+**To get it back:**
+1. Right-click any sheet tab
+2. Click **Unhide**
+3. Select **Access Codes**
+
 ## Attendance Codes
-- **Y** = Attended
-- **N** = Absent  
-- **E** = Excused absence (can be flagged to waive cost)
+- **1** = Attended
+- **0** = Absent  
+- **X** = Exempt (excused — cost can be waived)
 
 ---
 
