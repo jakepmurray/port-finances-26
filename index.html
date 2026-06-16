@@ -400,23 +400,22 @@ function tryLogin() {
       return;
     }
 
-    // Name: try common column names, then take the first non-code column value
-    const name = String(
-      accessRow['Full Name'] || accessRow['Player Name'] || accessRow['Name'] ||
-      Object.values(accessRow).find(v => String(v || '').trim().toUpperCase() !== code && String(v || '').trim()) || ''
-    ).trim();
+    // Pull all fields directly from the Access Codes sheet row
+    const vals = Object.values(accessRow).map(v => String(v || '').trim());
+    const codeIdx = vals.findIndex(v => v.toUpperCase() === code);
 
-    // Get role from Roster by matching on name
-    const rosterRow = (DATA['Roster'] || []).find(r =>
-      String(r['Full Name'] || Object.values(r)[0] || '').trim() === name
-    );
-    const role = String((rosterRow && rosterRow['Role']) || '').trim();
+    const name   = String(accessRow['Full Name'] || accessRow['Player Name'] || accessRow['Name'] ||
+                     vals.find((v, i) => i !== codeIdx && v) || '').trim();
+    const role   = String(accessRow['Role']   || accessRow['Player Role'] || '').trim();
+    const active = String(accessRow['Active'] || accessRow['Status']      || '').trim();
+
+    console.log('Matched row:', { name, role, active });
 
     let tier = 'player';
-    if (TIER_MAP.coach.includes(role)) tier = 'coach';
+    if (TIER_MAP.coach.includes(role))    tier = 'coach';
     else if (TIER_MAP.captain.includes(role)) tier = 'captain';
 
-    USER = { name, code, role, tier, row: accessRow };
+    USER = { name, code, role, tier, active, row: accessRow };
     document.getElementById('login-error').textContent = '';
 
     document.getElementById('login-screen').style.display = 'none';
