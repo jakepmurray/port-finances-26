@@ -249,6 +249,20 @@ tr:hover td { background: #f8fafc; }
       </div>
     </div>
 
+    <!-- TEAM STANDING (Captain / Coach view) -->
+    <div id="section-standing" class="section">
+      <div class="stat-grid cols-3" id="standing-stats"></div>
+      <div class="card">
+        <div class="card-title" style="justify-content:space-between">
+          <span id="standing-title">🏅 Team Financial Standing</span>
+        </div>
+        <div class="table-wrap">
+          <table><thead><tr id="standing-thead"><th>Player</th><th>Role</th><th>Standing</th></tr></thead>
+          <tbody id="standing-tbody"></tbody></table>
+        </div>
+      </div>
+    </div>
+
     <!-- TRANSACTIONS -->
     <div id="section-transactions" class="section">
       <div class="stat-grid cols-3" id="tx-stats"></div>
@@ -261,10 +275,10 @@ tr:hover td { background: #f8fafc; }
       </div>
     </div>
 
-    <!-- DASHBOARD (Coach/Treasurer) -->
+    <!-- DASHBOARD (Treasurer only) -->
     <div id="section-dashboard" class="section">
       <div class="stat-grid cols-4" id="dash-stats"></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.25rem" id="dash-lower">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.25rem;margin-bottom:1.25rem">
         <div class="card">
           <div class="card-title">💰 Financial Overview</div>
           <div id="dash-finance"></div>
@@ -274,10 +288,14 @@ tr:hover td { background: #f8fafc; }
           <div id="dash-events"></div>
         </div>
       </div>
+      <div class="card" id="dash-alert-card" style="display:none;border-left:4px solid var(--red);margin-bottom:1.25rem">
+        <div class="card-title" style="color:var(--red)">⚠ Needs Attention</div>
+        <div id="dash-alert-list"></div>
+      </div>
       <div class="card">
-        <div class="card-title">🏆 Player Balance Summary</div>
+        <div class="card-title">💳 Full Player Balance Breakdown</div>
         <div class="table-wrap">
-          <table><thead><tr><th>Player</th><th>Role</th><th>Dues Owed</th><th>Dues Paid</th><th>Event Costs</th><th>Paid Upfront</th><th>Net</th><th>Status</th></tr></thead>
+          <table><thead><tr><th>Player</th><th>Role</th><th>Total Charged</th><th>Paid</th><th>Net Balance</th><th>Status</th></tr></thead>
           <tbody id="dash-balances-tbody"></tbody></table>
         </div>
       </div>
@@ -422,26 +440,24 @@ function signOut() {
 
 // ── NAV ────────────────────────────────────────────────────────────────
 const TABS = {
-  player:  [['mybalance','🥏 My Balance']],
-  captain: [['roster','👥 Roster'],['events','📋 Events'],['attendance','✅ Attendance']],
-  coach:   [['dashboard','📊 Dashboard'],['roster','👥 Roster'],['events','📋 Events'],['attendance','✅ Attendance'],['transactions','💳 Transactions']],
+  player:    [['mybalance','🥏 My Balance']],
+  captain:   [['standing','🏅 Team Standing'],['events','📋 Events'],['attendance','✅ Attendance']],
+  coach:     [['standing','🏅 Team Standing'],['roster','👥 Roster'],['events','📋 Events'],['attendance','✅ Attendance']],
+  treasurer: [['dashboard','📊 Dashboard'],['standing','🏅 Team Standing'],['roster','👥 Roster'],['events','📋 Events'],['attendance','✅ Attendance'],['transactions','💳 Transactions']],
 };
 
 let currentSection = null;
 function setupNav() {
-  const tier = USER.tier;
   document.getElementById('header-user').textContent = USER.name;
   document.getElementById('header-tier').textContent = USER.role;
 
-  const tabs = tier === 'player'
-    ? TABS.player
-    : tier === 'captain'
-      ? TABS.captain
-      : TABS.coach;
+  let tabKey = USER.tier;
+  if (USER.tier === 'coach' && USER.role === 'Treasurer') tabKey = 'treasurer';
 
+  const tabs = TABS[tabKey] || TABS.player;
   const nav = document.getElementById('main-nav');
   nav.innerHTML = tabs.map(([id,label]) =>
-    `<button class="nav-tab" onclick="showSection('${id}')">${label}</button>`
+    `<button class="nav-tab" data-section="${id}" onclick="showSection('${id}')">${label}</button>`
   ).join('');
 
   showSection(tabs[0][0]);
@@ -449,10 +465,8 @@ function setupNav() {
 
 function showSection(id) {
   currentSection = id;
-  document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.nav-tab').forEach(t => {
-    if (t.textContent.includes(id === 'mybalance' ? 'Balance' : id.charAt(0).toUpperCase()+id.slice(1)))
-      t.classList.add('active');
+    t.classList.toggle('active', t.dataset.section === id);
   });
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
   const el = document.getElementById('section-'+id);
@@ -471,6 +485,7 @@ function renderSection(id) {
     attendance:   renderAttendance,
     transactions: renderTransactions,
     dashboard:    renderDashboard,
+    standing:     renderStanding,
   };
   if (renders[id]) renders[id]();
 }
@@ -769,80 +784,230 @@ function renderTransactions() {
   document.getElementById('tx-tbody').innerHTML = html;
 }
 
-// ── DASHBOARD (Coach/Treasurer) ─────────────────────────────────────────
+// ── TEAM STANDING (Captain / Coach / Treasurer) ────────────────────────
+function renderStanding() {
+  const balRows    = getBalanceRows();
+  const rosterRows = getRosterRows();
+  const showAmt    = USER.role === 'Treasurer';
+
+  const enriched = balRows.map(r => {
+    const name   = String(r['Player Name'] || Object.values(r)[0] || '').trim();
+    const net    = parseFloat(r['Net Balance'] || Object.values(r)[3]) || 0;
+    const status = String(r['Status'] || Object.values(r)[4] || '').trim();
+    const rr     = rosterRows.find(p => String(p['Full Name'] || Object.values(p)[0] || '').trim() === name);
+    const role   = rr ? String(rr['Role'] || Object.values(rr)[1] || '').trim() : '—';
+    return { name, net, status, role };
+  }).filter(p => p.name);
+
+  const nTotal   = enriched.length;
+  const nSettled = enriched.filter(p => Math.abs(p.net) < 0.5).length;
+  const nOwes    = enriched.filter(p => p.net > 0.5).length;
+  const nCredit  = enriched.filter(p => p.net < -0.5).length;
+  const pct      = nTotal > 0 ? Math.round(nSettled / nTotal * 100) : 0;
+
+  document.getElementById('standing-stats').innerHTML = `
+    <div class="stat-card">
+      <div class="stat-label">Settled Up</div>
+      <div class="stat-value green">${nSettled} <span style="font-size:16px;font-weight:400">/ ${nTotal}</span></div>
+      <div class="stat-sub">${pct}% of roster</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Balance Due</div>
+      <div class="stat-value ${nOwes > 0 ? 'red' : 'green'}">${nOwes}</div>
+      <div class="stat-sub">${nOwes === 0 ? 'Everyone caught up!' : `${nOwes} player${nOwes !== 1 ? 's' : ''} still owe`}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Has Credit</div>
+      <div class="stat-value navy">${nCredit}</div>
+      <div class="stat-sub">${nCredit === 0 ? 'No overpayments' : `${nCredit} player${nCredit !== 1 ? 's' : ''} overpaid`}</div>
+    </div>`;
+
+  // Sort: balance due first, then credit, then settled; alpha within each group
+  enriched.sort((a, b) => {
+    const rank = p => p.net > 0.5 ? 0 : p.net < -0.5 ? 1 : 2;
+    return rank(a) - rank(b) || a.name.localeCompare(b.name);
+  });
+
+  // Update header to show Amount column only for treasurer
+  document.getElementById('standing-thead').innerHTML =
+    `<th>Player</th><th>Role</th><th>Standing</th>${showAmt ? '<th style="text-align:right">Amount</th>' : ''}`;
+
+  let html = '';
+  enriched.forEach(p => {
+    const settled = Math.abs(p.net) < 0.5;
+    const owes    = p.net > 0.5;
+    const badge   = settled
+      ? '<span class="badge badge-green">Settled ✓</span>'
+      : owes
+        ? '<span class="badge badge-red">Balance Due</span>'
+        : '<span class="badge badge-blue">Has Credit</span>';
+    const amtCell = showAmt
+      ? `<td style="text-align:right;font-weight:600;color:${settled ? 'var(--green)' : owes ? 'var(--red)' : 'var(--navy)'}">
+           ${settled ? '—' : fmt$(Math.abs(p.net))}
+         </td>`
+      : '';
+    html += `<tr>
+      <td><strong>${esc(p.name)}</strong></td>
+      <td><span class="badge badge-navy">${esc(p.role)}</span></td>
+      <td>${badge}</td>
+      ${amtCell}
+    </tr>`;
+  });
+
+  if (!html) html = `<tr class="empty-row"><td colspan="${showAmt ? 4 : 3}">No balance data found</td></tr>`;
+  document.getElementById('standing-tbody').innerHTML = html;
+}
+
+// ── DASHBOARD (Treasurer only) ──────────────────────────────────────────
 function renderDashboard() {
-  const dash = DATA['Dashboard'] || [];
-  const get = label => {
-    const row = dash.find(r => String(Object.values(r)[0]||'').trim() === label);
-    return row ? (parseFloat(Object.values(row)[1]) || 0) : 0;
-  };
+  const balRows    = getBalanceRows();
+  const rosterRows = getRosterRows();
+  const txRows     = getTxRows();
+  const evtRows    = getEventsRows();
 
-  const totalPlayers = get('Total Players');
-  const activeP      = get('Active Players');
-  const totalIncome  = get('Total Income');
-  const totalExpense = get('Total Expenses');
-  const net          = get('Net Balance');
-  const totalEvents  = get('Total Events');
+  // Totals from Transactions
+  const totalIn  = txRows.filter(r => String(r['Type']||Object.values(r)[3]||'').trim() === 'Income')
+                         .reduce((s, r) => s + (parseFloat(r['Amount ($)']||Object.values(r)[5])||0), 0);
+  const totalOut = txRows.filter(r => String(r['Type']||Object.values(r)[3]||'').trim() === 'Expense')
+                         .reduce((s, r) => s + (parseFloat(r['Amount ($)']||Object.values(r)[5])||0), 0);
+  const pendingTx = txRows.filter(r => String(r['Status']||Object.values(r)[8]||'').trim() === 'Pending').length;
+  const teamNet   = totalIn - totalOut;
 
+  // Enrich balance rows with role
+  const enriched = balRows.map(r => {
+    const name    = String(r['Player Name']    || Object.values(r)[0] || '').trim();
+    const charged = parseFloat(r['Total Charged'] || r['Dues Owed']  || Object.values(r)[1]) || 0;
+    const paid    = parseFloat(r['Paid Upfront For Team'] || r['Dues Paid'] || Object.values(r)[2]) || 0;
+    const net     = parseFloat(r['Net Balance'] || Object.values(r)[3]) || 0;
+    const status  = String(r['Status']          || Object.values(r)[4] || '').trim();
+    const rr      = rosterRows.find(p => String(p['Full Name']||Object.values(p)[0]||'').trim() === name);
+    const role    = rr ? String(rr['Role']||Object.values(rr)[1]||'').trim() : '—';
+    return { name, charged, paid, net, status, role };
+  }).filter(p => p.name);
+
+  const totalOwed    = enriched.reduce((s, p) => p.net >  0.5 ? s + p.net        : s, 0);
+  const totalCredits = enriched.reduce((s, p) => p.net < -0.5 ? s + Math.abs(p.net) : s, 0);
+  const nOwes        = enriched.filter(p => p.net > 0.5).length;
+  const nSettled     = enriched.filter(p => Math.abs(p.net) < 0.5).length;
+  const collRate     = enriched.length > 0 ? Math.round(nSettled / enriched.length * 100) : 0;
+
+  // KPI cards
   document.getElementById('dash-stats').innerHTML = `
-    <div class="stat-card"><div class="stat-label">Net balance</div><div class="stat-value ${net>=0?'green':'red'}">${fmt$(net)}</div><div class="stat-sub">Season to date</div></div>
-    <div class="stat-card"><div class="stat-label">Total income</div><div class="stat-value green">${fmt$(totalIncome)}</div></div>
-    <div class="stat-card"><div class="stat-label">Total expenses</div><div class="stat-value red">${fmt$(totalExpense)}</div></div>
-    <div class="stat-card"><div class="stat-label">Active players</div><div class="stat-value navy">${Math.round(activeP)} / ${Math.round(totalPlayers)}</div></div>`;
+    <div class="stat-card">
+      <div class="stat-label">Team Net Balance</div>
+      <div class="stat-value ${teamNet >= 0 ? 'green' : 'red'}">${fmt$(teamNet)}</div>
+      <div class="stat-sub">Income minus expenses</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Outstanding</div>
+      <div class="stat-value ${totalOwed > 0 ? 'red' : 'green'}">${fmt$(totalOwed)}</div>
+      <div class="stat-sub">${nOwes} player${nOwes !== 1 ? 's' : ''} with balance due</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Team Credits</div>
+      <div class="stat-value navy">${fmt$(totalCredits)}</div>
+      <div class="stat-sub">${enriched.filter(p => p.net < -0.5).length} player${enriched.filter(p=>p.net<-0.5).length!==1?'s':''} overpaid</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Collection Rate</div>
+      <div class="stat-value ${collRate >= 80 ? 'green' : collRate >= 50 ? 'navy' : 'red'}">${collRate}%</div>
+      <div class="stat-sub">${nSettled} of ${enriched.length} settled</div>
+    </div>`;
+
+  // Financial overview
+  const totalBudget = evtRows.reduce((s, r) => s + (parseFloat(r['Budgeted Cost ($)']||Object.values(r)[5])||0), 0);
+  const totalActual = evtRows.reduce((s, r) => s + (parseFloat(r['Actual Cost ($)']  ||Object.values(r)[6])||0), 0);
+  const budgetPct   = totalBudget > 0 ? Math.min(100, Math.round(totalActual / totalBudget * 100)) : 0;
+  const totalCharged = enriched.reduce((s, p) => s + p.charged, 0);
+  const totalPaid    = enriched.reduce((s, p) => s + p.paid,    0);
+  const collPct      = totalCharged > 0 ? Math.min(100, Math.round(totalPaid / totalCharged * 100)) : 0;
 
   document.getElementById('dash-finance').innerHTML = `
     <div class="progress-wrap">
-      <div class="progress-label"><span>Dues collected</span><span>${fmt$(get('Total Dues Collected'))} / ${fmt$(get('Total Dues Owed'))}</span></div>
-      <div class="progress-track"><div class="progress-fill" style="width:${get('Total Dues Owed')>0?Math.min(100,Math.round(get('Total Dues Collected')/get('Total Dues Owed')*100)):0}%;background:var(--green)"></div></div>
+      <div class="progress-label"><span>Payments collected</span><span>${fmt$(totalPaid)} / ${fmt$(totalCharged)}</span></div>
+      <div class="progress-track"><div class="progress-fill" style="width:${collPct}%;background:var(--green)"></div></div>
     </div>
     <div class="progress-wrap" style="margin-top:1rem">
-      <div class="progress-label"><span>Budget used</span><span>${fmt$(get('Total Actual Spend'))} / ${fmt$(get('Total Budgeted'))}</span></div>
-      <div class="progress-track"><div class="progress-fill" style="width:${get('Total Budgeted')>0?Math.min(100,Math.round(get('Total Actual Spend')/get('Total Budgeted')*100)):0}%;background:var(--gold)"></div></div>
+      <div class="progress-label"><span>Budget used</span><span>${fmt$(totalActual)} / ${fmt$(totalBudget)}</span></div>
+      <div class="progress-track"><div class="progress-fill" style="width:${budgetPct}%;background:${budgetPct > 100 ? 'var(--red)' : 'var(--gold)'}"></div></div>
     </div>
     <div style="margin-top:1.25rem;font-size:13px;color:var(--muted)">
-      <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)"><span>Dues outstanding</span><span style="font-weight:600;color:var(--red)">${fmt$(get('Dues Outstanding'))}</span></div>
-      <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)"><span>Pending transactions</span><span style="font-weight:600">${Math.round(get('Pending Transactions'))}</span></div>
-      <div style="display:flex;justify-content:space-between;padding:6px 0"><span>Budget variance</span><span style="font-weight:600;color:${get('Budget Variance')>=0?'var(--green)':'var(--red)'}">${fmt$(get('Budget Variance'))}</span></div>
+      <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">
+        <span>Total income</span><span style="font-weight:600;color:var(--green)">${fmt$(totalIn)}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">
+        <span>Total expenses</span><span style="font-weight:600;color:var(--red)">${fmt$(totalOut)}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">
+        <span>Budget variance</span>
+        <span style="font-weight:600;color:${totalBudget - totalActual >= 0 ? 'var(--green)' : 'var(--red)'}">${fmt$(totalBudget - totalActual)}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;padding:6px 0">
+        <span>Pending transactions</span><span style="font-weight:600">${pendingTx}</span>
+      </div>
     </div>`;
 
+  // Events overview
+  const cats = ['Tournament','Practice','Fundraiser','Other'];
+  const catCounts = cats.map(c => evtRows.filter(r => String(r['Category']||Object.values(r)[2]||'').trim() === c).length);
+  const catColors = ['navy','','green',''];
   document.getElementById('dash-events').innerHTML = `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:1rem">
-      ${[['Total',Math.round(get('Total Events')),'navy'],['Tournaments',Math.round(get('Tournaments')),''],['Practices',Math.round(get('Practices')),''],['Fundraisers',Math.round(get('Fundraisers')),'green']].map(([l,v,c])=>`
+      <div style="background:var(--bg);border-radius:8px;padding:.6rem .8rem">
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Total Events</div>
+        <div style="font-size:20px;font-weight:700;color:var(--navy)">${evtRows.length}</div>
+      </div>
+      ${cats.map((c,i) => `
         <div style="background:var(--bg);border-radius:8px;padding:.6rem .8rem">
-          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">${l}</div>
-          <div style="font-size:20px;font-weight:700;color:var(--${c||'text'})">${v}</div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">${c}s</div>
+          <div style="font-size:20px;font-weight:700;color:var(--${catColors[i]||'text'})">${catCounts[i]}</div>
         </div>`).join('')}
     </div>
     <div style="font-size:13px;color:var(--muted)">
-      <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)"><span>Total budgeted</span><span style="font-weight:600">${fmt$(get('Total Budgeted'))}</span></div>
-      <div style="display:flex;justify-content:space-between;padding:6px 0"><span>Total actual spend</span><span style="font-weight:600">${fmt$(get('Total Actual Spend'))}</span></div>
+      <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">
+        <span>Total budgeted</span><span style="font-weight:600">${fmt$(totalBudget)}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;padding:6px 0">
+        <span>Total actual spend</span><span style="font-weight:600">${fmt$(totalActual)}</span>
+      </div>
     </div>`;
 
-  const balRows = getBalanceRows();
-  let balHtml = '';
-  balRows.forEach(r => {
-    const name      = String(r['Player Name']||Object.values(r)[0]||'').trim();
-    const role      = getRosterRows().find(p=>String(p['Full Name']||Object.values(p)[0]||'').trim()===name);
-    const roleLabel = role ? String(role['Role']||Object.values(role)[6]||'').trim() : '—';
-    const dOwed     = parseFloat(r['Dues Owed']||Object.values(r)[2]) || 0;
-    const dPaid     = parseFloat(r['Dues Paid']||Object.values(r)[3]) || 0;
-    const evtCost   = parseFloat(r['Event Costs Owed']||Object.values(r)[4]) || 0;
-    const upfront   = parseFloat(r['Paid Upfront For Team']||Object.values(r)[5]) || 0;
-    const net       = parseFloat(r['Net Balance']||Object.values(r)[6]) || 0;
-    const status    = String(r['Status']||Object.values(r)[7]||'').trim();
+  // "Needs attention" alert strip — players with outstanding balance
+  const overdue = enriched.filter(p => p.net > 0.5).sort((a, b) => b.net - a.net);
+  const alertCard = document.getElementById('dash-alert-card');
+  if (overdue.length > 0) {
+    alertCard.style.display = 'block';
+    document.getElementById('dash-alert-list').innerHTML = `
+      <div style="display:flex;flex-wrap:wrap;gap:8px;padding-top:.25rem">
+        ${overdue.map(p => `
+          <div style="background:#fff0f0;border:1px solid #fca5a5;border-radius:8px;padding:6px 12px;font-size:13px">
+            <strong>${esc(p.name)}</strong>
+            <span style="color:var(--red);margin-left:8px;font-weight:600">${fmt$(p.net)}</span>
+          </div>`).join('')}
+      </div>`;
+  } else {
+    alertCard.style.display = 'none';
+  }
 
-    balHtml += `<tr>
-      <td><strong>${esc(name)}</strong></td>
-      <td><span class="badge badge-navy">${esc(roleLabel)}</span></td>
-      <td>${fmt$(dOwed)}</td>
-      <td>${fmt$(dPaid)}</td>
-      <td>${fmt$(evtCost)}</td>
-      <td>${fmt$(upfront)}</td>
-      <td style="font-weight:700;color:${Math.abs(net)<0.5?'var(--green)':net>0?'var(--red)':'var(--navy)'}">${fmt$(net)}</td>
-      <td>${statusBadge(status)}</td>
+  // Full balance table — sorted highest owed first
+  enriched.sort((a, b) => b.net - a.net);
+  let balHtml = '';
+  enriched.forEach(p => {
+    const settled  = Math.abs(p.net) < 0.5;
+    const owes     = p.net > 0.5;
+    const rowStyle = settled ? '' : owes ? 'background:#fff8f8' : 'background:#f0f7ff';
+    balHtml += `<tr style="${rowStyle}">
+      <td><strong>${esc(p.name)}</strong></td>
+      <td><span class="badge badge-navy">${esc(p.role)}</span></td>
+      <td>${fmt$(p.charged)}</td>
+      <td>${fmt$(p.paid)}</td>
+      <td style="font-weight:700;color:${settled ? 'var(--green)' : owes ? 'var(--red)' : 'var(--navy)'}">
+        ${settled ? '—' : (owes ? '+' : '-') + fmt$(Math.abs(p.net))}
+      </td>
+      <td>${statusBadge(p.status)}</td>
     </tr>`;
   });
-  if (!balHtml) balHtml = '<tr class="empty-row"><td colspan="8">No balance data</td></tr>';
+  if (!balHtml) balHtml = '<tr class="empty-row"><td colspan="6">No balance data</td></tr>';
   document.getElementById('dash-balances-tbody').innerHTML = balHtml;
 }
 
