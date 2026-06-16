@@ -439,7 +439,9 @@ function tryLogin() {
       }
     }
 
-    console.log('Login resolved:', { name, role, active, accessRowKeys: Object.keys(accessRow) });
+    console.log('Access row data:', JSON.stringify(accessRow));
+    console.log('Roster rows sample:', JSON.stringify((DATA['Roster']||[]).slice(0,5)));
+    console.log('Login resolved:', { name, role, active });
 
     let tier = 'player';
     if (TIER_MAP.coach.includes(role))    tier = 'coach';
