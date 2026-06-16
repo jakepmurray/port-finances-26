@@ -582,11 +582,24 @@ function getBalanceRows() {
 const KNOWN_ROLES = ['Coach','Treasurer','Manager','Captain','Player'];
 function getRoleFromRow(r) {
   if (!r) return '';
-  // Try named column first
   const named = String(r['Role'] || r['Player Role'] || '').trim();
   if (KNOWN_ROLES.includes(named)) return named;
-  // Scan all values for a known role (handles renamed/shifted columns)
   return Object.values(r).map(v => String(v||'').trim()).find(v => KNOWN_ROLES.includes(v)) || '';
+}
+
+// Access Codes is the authoritative source for Role and Status (Roster sheet
+// only has data for a handful of rows). Build a name→role/status map once
+// and reuse it across all render functions.
+const AC_SKIP_NAMES = new Set(['Player Name','ACCESS CODES','TREASURER ONLY']);
+function buildAcMaps() {
+  const roleMap = {}, statusMap = {};
+  (DATA['Access Codes'] || []).forEach(ac => {
+    const n = String(ac['Player Name'] || Object.values(ac)[0] || '').trim();
+    if (!n || AC_SKIP_NAMES.has(n) || /hide|right-click/i.test(n)) return;
+    roleMap[n]   = String(ac['Role']   || Object.values(ac)[2] || '').trim();
+    statusMap[n] = String(ac['Status'] || Object.values(ac)[3] || '').trim();
+  });
+  return { roleMap, statusMap };
 }
 
 // ── MY BALANCE (player view) ───────────────────────────────────────────
@@ -686,16 +699,7 @@ function renderMyBalance() {
 function renderRoster() {
   const rows = getRosterRows();
 
-  // Access Codes is the source of truth for Role and Status — the Roster sheet
-  // only has data for the first few rows (leftover template placeholder entries).
-  const AC_SKIP = new Set(['Player Name','ACCESS CODES','TREASURER ONLY']);
-  const acRoleMap = {}, acStatusMap = {};
-  (DATA['Access Codes'] || []).forEach(ac => {
-    const n = String(ac['Player Name'] || Object.values(ac)[0] || '').trim();
-    if (!n || AC_SKIP.has(n) || /hide|right-click/i.test(n)) return;
-    acRoleMap[n]   = String(ac['Role']   || Object.values(ac)[2] || '').trim();
-    acStatusMap[n] = String(ac['Status'] || Object.values(ac)[3] || '').trim();
-  });
+  const { roleMap: acRoleMap, statusMap: acStatusMap } = buildAcMaps();
 
   const getName   = r => String(r['Full Name'] || Object.values(r)[0] || '').trim();
   const getRole   = r => { const n = getName(r); return acRoleMap[n] || getRoleFromRow(r) || ''; };
@@ -893,13 +897,14 @@ function renderStanding() {
   const balRows    = getBalanceRows();
   const rosterRows = getRosterRows();
   const showAmt    = USER.role === 'Treasurer';
+  const { roleMap: acRoleMap } = buildAcMaps();
 
   const enriched = balRows.map(r => {
     const name   = String(r['Player Name'] || Object.values(r)[0] || '').trim();
     const net    = parseFloat(r['Net Balance ($)'] || Object.values(r)[4]) || 0;
     const status = String(r['Status'] || Object.values(r)[5] || '').trim();
     const rr     = rosterRows.find(p => String(p['Full Name'] || Object.values(p)[0] || '').trim() === name);
-    const role   = getRoleFromRow(rr) || '—';
+    const role   = acRoleMap[name] || getRoleFromRow(rr) || '—';
     return { name, net, status, role };
   }).filter(p => p.name);
 
@@ -1038,6 +1043,7 @@ function renderDashboard() {
   const rosterRows = getRosterRows();
   const txRows     = getTxRows();
   const evtRows    = getEventsRows();
+  const { roleMap: acRoleMap } = buildAcMaps();
 
   // Totals from Transactions (Fundraiser counts as income, matching the spreadsheet formula)
   const totalIn  = txRows.filter(r => { const t=String(r['Type']||Object.values(r)[3]||'').trim(); return t==='Income'||t==='Fundraiser'; })
@@ -1055,7 +1061,7 @@ function renderDashboard() {
     const net     = parseFloat(r['Net Balance ($)']   || Object.values(r)[4]) || 0;
     const status  = String(r['Status']                || Object.values(r)[5] || '').trim();
     const rr      = rosterRows.find(p => String(p['Full Name']||Object.values(p)[0]||'').trim() === name);
-    const role    = getRoleFromRow(rr) || '—';
+    const role    = acRoleMap[name] || getRoleFromRow(rr) || '—';
     return { name, charged, paid, net, status, role };
   }).filter(p => p.name);
 
