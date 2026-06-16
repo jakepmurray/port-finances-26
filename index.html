@@ -408,18 +408,34 @@ function tryLogin() {
       vals.find((v, i) => i !== codeIdx && v) || ''
     ).trim();
 
-    // Try role from Access Codes first; fall back to Roster with case-insensitive match
-    let role   = String(accessRow['Role'] || accessRow['Player Role'] || '').trim();
-    let active = String(accessRow['Active'] || accessRow['Status'] || accessRow['Active?'] || '').trim();
+    // Known role and status values to scan for
+    const KNOWN_ROLES    = new Set(['Coach','Treasurer','Manager','Captain','Player']);
+    const KNOWN_STATUSES = new Set(['Active','Inactive','Alumni']);
 
-    if (!role) {
+    function scanRow(row) {
+      let r = '', a = '';
+      for (const v of Object.values(row)) {
+        const s = String(v || '').trim();
+        if (!r && KNOWN_ROLES.has(s))    r = s;
+        if (!a && KNOWN_STATUSES.has(s)) a = s;
+      }
+      return { role: r, active: a };
+    }
+
+    // 1. Check Access Codes row itself
+    let { role, active } = scanRow(accessRow);
+
+    // 2. If still missing, scan every Roster row whose values include this name
+    if (!role || !active) {
       const nameLower = name.toLowerCase();
-      const rosterRow = (DATA['Roster'] || []).find(r =>
-        String(r['Full Name'] || Object.values(r)[0] || '').trim().toLowerCase() === nameLower
-      );
-      if (rosterRow) {
-        role   = String(rosterRow['Role']   || rosterRow['Player Role'] || Object.values(rosterRow)[1] || '').trim();
-        active = active || String(rosterRow['Status'] || rosterRow['Active'] || '').trim();
+      for (const row of DATA['Roster'] || []) {
+        const vals = Object.values(row).map(v => String(v || '').trim());
+        if (vals.some(v => v.toLowerCase() === nameLower)) {
+          const found = scanRow(row);
+          role   = role   || found.role;
+          active = active || found.active;
+          break;
+        }
       }
     }
 
