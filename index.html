@@ -363,42 +363,54 @@ async function loadData() {
 
 // ── AUTH ──────────────────────────────────────────────────────────────
 function tryLogin() {
-  const code = document.getElementById('code-input').value.trim().toUpperCase();
-  if (!code) return;
+  try {
+    const code = document.getElementById('code-input').value.trim().toUpperCase();
+    if (!code) return;
 
-  // Look up the code in the dedicated Access Codes sheet
-  const accessSheet = DATA['Access Codes'] || [];
-  const accessRow = accessSheet.find(r => {
-    const ac = String(r['Access Code'] || Object.values(r)[1] || '').trim().toUpperCase();
-    return ac === code;
-  });
+    // Debug: log available sheet names and Access Codes rows
+    console.log('DATA sheets:', Object.keys(DATA));
+    const accessSheet = DATA['Access Codes'] || [];
+    console.log('Access Codes rows:', accessSheet.length, accessSheet.slice(0, 3));
 
-  if (!accessRow) {
-    document.getElementById('login-error').textContent = 'Code not found. Check with your treasurer.';
-    return;
+    // Search all column values so we match regardless of exact column name
+    const accessRow = accessSheet.find(r =>
+      Object.values(r).some(v => String(v || '').trim().toUpperCase() === code)
+    );
+
+    if (!accessRow) {
+      document.getElementById('login-error').textContent = 'Code not found. Check with your treasurer.';
+      return;
+    }
+
+    // Name: try common column names, then take the first non-code column value
+    const name = String(
+      accessRow['Full Name'] || accessRow['Player Name'] || accessRow['Name'] ||
+      Object.values(accessRow).find(v => String(v || '').trim().toUpperCase() !== code && String(v || '').trim()) || ''
+    ).trim();
+
+    // Get role from Roster by matching on name
+    const rosterRow = (DATA['Roster'] || []).find(r =>
+      String(r['Full Name'] || Object.values(r)[0] || '').trim() === name
+    );
+    const role = String((rosterRow && rosterRow['Role']) || '').trim();
+
+    let tier = 'player';
+    if (TIER_MAP.coach.includes(role)) tier = 'coach';
+    else if (TIER_MAP.captain.includes(role)) tier = 'captain';
+
+    USER = { name, code, role, tier, row: accessRow };
+    document.getElementById('login-error').textContent = '';
+
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
+    document.getElementById('loading').style.display = 'none';
+
+    setupNav();
+    renderCurrentView();
+  } catch(e) {
+    console.error('Login error:', e);
+    document.getElementById('login-error').textContent = 'Login error: ' + e.message;
   }
-
-  const name = String(accessRow['Full Name'] || accessRow['Player Name'] || Object.values(accessRow)[0] || '').trim();
-
-  // Get role from Roster by matching on name
-  const rosterRow = (DATA['Roster'] || []).find(r =>
-    String(r['Full Name'] || Object.values(r)[0] || '').trim() === name
-  );
-  const role = String((rosterRow && rosterRow['Role']) || '').trim();
-
-  let tier = 'player';
-  if (TIER_MAP.coach.includes(role)) tier = 'coach';
-  else if (TIER_MAP.captain.includes(role)) tier = 'captain';
-
-  USER = { name, code, role, tier, row: accessRow };
-  document.getElementById('login-error').textContent = '';
-
-  document.getElementById('login-screen').style.display = 'none';
-  document.getElementById('app').style.display = 'block';
-  document.getElementById('loading').style.display = 'none';
-
-  setupNav();
-  renderCurrentView();
 }
 
 function signOut() {
