@@ -685,9 +685,25 @@ function renderMyBalance() {
 // ── ROSTER ─────────────────────────────────────────────────────────────
 function renderRoster() {
   const rows = getRosterRows();
-  const active = rows.filter(r => String(r['Status']||Object.values(r)[4]||'').trim() === 'Active');
-  const coaches = rows.filter(r => TIER_MAP.coach.includes(getRoleFromRow(r)));
-  const captains = rows.filter(r => TIER_MAP.captain.includes(getRoleFromRow(r)));
+
+  // Access Codes is the source of truth for Role and Status — the Roster sheet
+  // only has data for the first few rows (leftover template placeholder entries).
+  const AC_SKIP = new Set(['Player Name','ACCESS CODES','TREASURER ONLY']);
+  const acRoleMap = {}, acStatusMap = {};
+  (DATA['Access Codes'] || []).forEach(ac => {
+    const n = String(ac['Player Name'] || Object.values(ac)[0] || '').trim();
+    if (!n || AC_SKIP.has(n) || /hide|right-click/i.test(n)) return;
+    acRoleMap[n]   = String(ac['Role']   || Object.values(ac)[2] || '').trim();
+    acStatusMap[n] = String(ac['Status'] || Object.values(ac)[3] || '').trim();
+  });
+
+  const getName   = r => String(r['Full Name'] || Object.values(r)[0] || '').trim();
+  const getRole   = r => { const n = getName(r); return acRoleMap[n] || getRoleFromRow(r) || ''; };
+  const getStatus = r => { const n = getName(r); return String(r['Status'] || Object.values(r)[4] || acStatusMap[n] || '').trim(); };
+
+  const active   = rows.filter(r => getStatus(r) === 'Active');
+  const coaches  = rows.filter(r => TIER_MAP.coach.includes(getRole(r)));
+  const captains = rows.filter(r => TIER_MAP.captain.includes(getRole(r)));
 
   document.getElementById('roster-stats').innerHTML = `
     <div class="stat-card"><div class="stat-label">Total players</div><div class="stat-value navy">${rows.length}</div></div>
@@ -700,11 +716,11 @@ function renderRoster() {
 
   let html = '';
   rows.forEach(r => {
-    const name  = String(r['Full Name'] || Object.values(r)[0] || '').trim();
-    const role  = getRoleFromRow(r);
+    const name  = getName(r);
+    const role  = getRole(r);
     const dues  = parseFloat(r['Dues Amount ($)'] || Object.values(r)[1]) || 0;
     const paidS = String(r['Dues Paid?'] || Object.values(r)[2] || '').trim();
-    const stat  = String(r['Status'] || Object.values(r)[4] || '').trim();
+    const stat  = getStatus(r);
 
     let netHtml = '—';
     if (showBalance) {
