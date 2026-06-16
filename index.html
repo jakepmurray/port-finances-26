@@ -481,8 +481,8 @@ function signOut() {
 // ── NAV ────────────────────────────────────────────────────────────────
 const TABS = {
   player:    [['mybalance','🥏 My Balance']],
-  captain:   [['standing','🏅 Team Standing'],['events','📋 Events'],['attendance','✅ Attendance']],
-  coach:     [['standing','🏅 Team Standing'],['roster','👥 Roster'],['events','📋 Events'],['attendance','✅ Attendance']],
+  captain:   [['standing','🏅 Team Standing'],['attendance','✅ Attendance']],
+  coach:     [['standing','🏅 Team Standing'],['attendance','✅ Attendance']],
   treasurer: [['dashboard','📊 Dashboard'],['standing','🏅 Team Standing'],['roster','👥 Roster'],['events','📋 Events'],['attendance','✅ Attendance'],['transactions','💳 Transactions']],
 };
 
@@ -759,46 +759,57 @@ function renderEvents() {
 // ── ATTENDANCE ─────────────────────────────────────────────────────────
 function renderAttendance() {
   const attSheet = DATA['Attendance'] || [];
+  const evtRows  = getEventsRows();
+
   if (!attSheet.length) {
     document.getElementById('att-head').innerHTML = '<tr><th>No attendance data</th></tr>';
     document.getElementById('att-tbody').innerHTML = '';
     return;
   }
 
-  // Skip the three summary rows that sit between the header and actual player rows
+  // Rows 4-6 (Cost per Person, Total Attendees, Total Cost) sit between the header and player data
   const ATT_SKIP = new Set(['Cost per Person ($) [auto]', 'Total Attendees', 'Total Cost ($)']);
   const playerRows = attSheet.filter(r => {
     const name = String(r['Player Name'] || r['Full Name'] || Object.values(r)[0] || '').trim();
     return name && !ATT_SKIP.has(name);
   });
 
-  // attSheet[0] is the Cost per Person row — it carries all event names as column keys
-  const evtCols = Object.keys(attSheet[0] || {}).filter(k =>
+  // Build event column keys. If the Attendance header formulas have cached event names use them;
+  // otherwise fall back to event names from the Events sheet (positional columns B, C, …).
+  const namedKeys = Object.keys(attSheet[0] || {}).filter(k =>
     !['Player Name','Full Name','Access Code'].includes(k) && !k.startsWith('__')
   ).slice(0, 20);
+  const evtNames = evtRows.map(r => String(r['Event Name'] || Object.values(r)[0] || '').trim()).filter(Boolean).slice(0, 20);
+  const evtCols    = namedKeys.length > 0 ? namedKeys : evtNames;
+  const positional = namedKeys.length === 0; // no cached header values — read by column index
 
-  const evtRows = getEventsRows();
+  const isAttended = v => { const s = String(v||'').trim(); return s === '1' || s.toUpperCase() === 'Y'; };
 
   let headHtml = '<tr><th>Player</th>';
   evtCols.forEach((col, i) => {
-    const evt = evtRows[i];
-    const label = evt ? String(evt['Event Name']||Object.values(evt)[0]||col).trim().substring(0,18) : col;
-    headHtml += `<th title="${esc(label)}">${esc(label.length>14?label.substring(0,14)+'…':label)}</th>`;
+    const label = evtNames[i] || col;
+    const short  = label.length > 14 ? label.substring(0, 14) + '…' : label;
+    headHtml += `<th title="${esc(label)}">${esc(short)}</th>`;
   });
   headHtml += '<th>Attended</th><th>Rate</th></tr>';
 
   let bodyHtml = '';
   playerRows.forEach(r => {
-    const name = String(r['Player Name']||r['Full Name']||Object.values(r)[0]||'').trim();
-    const attended = evtCols.filter(c => String(r[c]||'').trim() === '1').length;
+    const name = String(r['Player Name'] || r['Full Name'] || Object.values(r)[0] || '').trim();
+    const vals = Object.values(r); // positional fallback: [0]=name, [1]=evt1, [2]=evt2, …
+
+    const marks = evtCols.map((col, i) =>
+      positional ? vals[i + 1] : r[col]
+    );
+
+    const attended = marks.filter(isAttended).length;
     const total    = evtCols.length;
-    const rate     = total > 0 ? Math.round(attended/total*100) : 0;
+    const rate     = total > 0 ? Math.round(attended / total * 100) : 0;
 
     bodyHtml += `<tr><td><strong>${esc(name)}</strong></td>`;
-    evtCols.forEach(col => {
-      const raw = String(r[col]||'').trim();
-      const val = raw === '1' ? 'Y' : raw;
-      bodyHtml += `<td style="text-align:center">${val ? statusBadge(val) : '<span style="color:var(--muted)">—</span>'}</td>`;
+    marks.forEach(v => {
+      const disp = isAttended(v) ? 'Y' : String(v || '').trim();
+      bodyHtml += `<td style="text-align:center">${disp ? statusBadge(disp) : '<span style="color:var(--muted)">—</span>'}</td>`;
     });
     bodyHtml += `<td style="text-align:center;font-weight:600">${attended}/${total}</td>`;
     bodyHtml += `<td><div class="progress-track" style="width:60px;display:inline-block"><div class="progress-fill" style="width:${rate}%;background:${rate>=75?'var(--green)':rate>=50?'var(--gold)':'var(--red)'}"></div></div> <span style="font-size:11px">${rate}%</span></td>`;
