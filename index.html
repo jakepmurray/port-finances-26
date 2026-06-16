@@ -400,16 +400,30 @@ function tryLogin() {
       return;
     }
 
-    // Pull all fields directly from the Access Codes sheet row
-    const vals = Object.values(accessRow).map(v => String(v || '').trim());
+    // Pull fields from the Access Codes row
+    const vals    = Object.values(accessRow).map(v => String(v || '').trim());
     const codeIdx = vals.findIndex(v => v.toUpperCase() === code);
+    const name    = String(
+      accessRow['Full Name'] || accessRow['Player Name'] || accessRow['Name'] ||
+      vals.find((v, i) => i !== codeIdx && v) || ''
+    ).trim();
 
-    const name   = String(accessRow['Full Name'] || accessRow['Player Name'] || accessRow['Name'] ||
-                     vals.find((v, i) => i !== codeIdx && v) || '').trim();
-    const role   = String(accessRow['Role']   || accessRow['Player Role'] || '').trim();
-    const active = String(accessRow['Active'] || accessRow['Status']      || '').trim();
+    // Try role from Access Codes first; fall back to Roster with case-insensitive match
+    let role   = String(accessRow['Role'] || accessRow['Player Role'] || '').trim();
+    let active = String(accessRow['Active'] || accessRow['Status'] || accessRow['Active?'] || '').trim();
 
-    console.log('Matched row:', { name, role, active });
+    if (!role) {
+      const nameLower = name.toLowerCase();
+      const rosterRow = (DATA['Roster'] || []).find(r =>
+        String(r['Full Name'] || Object.values(r)[0] || '').trim().toLowerCase() === nameLower
+      );
+      if (rosterRow) {
+        role   = String(rosterRow['Role']   || rosterRow['Player Role'] || Object.values(rosterRow)[1] || '').trim();
+        active = active || String(rosterRow['Status'] || rosterRow['Active'] || '').trim();
+      }
+    }
+
+    console.log('Login resolved:', { name, role, active, accessRowKeys: Object.keys(accessRow) });
 
     let tier = 'player';
     if (TIER_MAP.coach.includes(role))    tier = 'coach';
