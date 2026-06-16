@@ -366,22 +366,25 @@ function tryLogin() {
   const code = document.getElementById('code-input').value.trim().toUpperCase();
   if (!code) return;
 
-  const roster = DATA['Roster'] || [];
-  // Skip header rows (rows where col 0 is a section label like "Total Players")
-  const players = roster.filter(r => {
-    const name = String(r['Full Name'] || r['__EMPTY'] || Object.values(r)[0] || '').trim();
-    const accessCode = String(r['Access Code'] || Object.values(r)[1] || '').trim().toUpperCase();
-    return accessCode === code && name;
+  // Look up the code in the dedicated Access Codes sheet
+  const accessSheet = DATA['Access Codes'] || [];
+  const accessRow = accessSheet.find(r => {
+    const ac = String(r['Access Code'] || Object.values(r)[1] || '').trim().toUpperCase();
+    return ac === code;
   });
 
-  if (players.length === 0) {
+  if (!accessRow) {
     document.getElementById('login-error').textContent = 'Code not found. Check with your treasurer.';
     return;
   }
 
-  const p = players[0];
-  const name = String(p['Full Name'] || Object.values(p)[0] || '').trim();
-  const role = String(p['Role'] || '').trim();
+  const name = String(accessRow['Full Name'] || accessRow['Player Name'] || Object.values(accessRow)[0] || '').trim();
+
+  // Get role from Roster by matching on name
+  const rosterRow = (DATA['Roster'] || []).find(r =>
+    String(r['Full Name'] || Object.values(r)[0] || '').trim() === name
+  );
+  const role = String((rosterRow && rosterRow['Role']) || '').trim();
 
   let tier = 'player';
   if (TIER_MAP.coach.includes(role)) tier = 'coach';
@@ -464,8 +467,7 @@ function renderSection(id) {
 function getRosterRows() {
   return (DATA['Roster'] || []).filter(r => {
     const name = String(r['Full Name'] || Object.values(r)[0] || '').trim();
-    const code = String(r['Access Code'] || Object.values(r)[1] || '').trim();
-    return name && code && !['Full Name','Total Players','TOTAL'].includes(name);
+    return name && !['Full Name','Total Players','TOTAL'].includes(name);
   });
 }
 function getEventsRows() {
@@ -491,7 +493,7 @@ function getBalanceRows() {
 function renderMyBalance() {
   const balRows = getBalanceRows();
   const myBal = balRows.find(r =>
-    String(r['Access Code'] || Object.values(r)[1] || '').trim().toUpperCase() === USER.code
+    String(r['Player Name'] || Object.values(r)[0] || '').trim() === USER.name
   );
 
   let net = 0, duesOwed = 0, duesPaid = 0, eventCosts = 0, paidUpfront = 0, standing = '';
@@ -535,7 +537,7 @@ function renderMyBalance() {
   // Find attendance rows for this player
   const attSheet = DATA['Attendance'] || [];
   const myAttRow = attSheet.find(r =>
-    String(r['Access Code'] || Object.values(r)[1] || '').trim().toUpperCase() === USER.code
+    String(r['Full Name'] || Object.values(r)[0] || '').trim() === USER.name
   );
   const evtRows = getEventsRows();
   const evtHeaders = attSheet.length > 0
