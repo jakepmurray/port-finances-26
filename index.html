@@ -366,9 +366,18 @@ async function loadData() {
     const buf = await resp.arrayBuffer();
     const wb = XLSX.read(buf, {type:'array', cellDates:false});
 
+    // Every sheet has a title row (and sometimes summary rows) before the real column headers.
+    // range: N skips the first N rows so row N+1 becomes the header, giving correct named-key access.
+    const SHEET_RANGES = {
+      'Roster': 3, 'Player Balances': 5, 'Access Codes': 4,
+      'Events': 3, 'Attendance': 2, 'Transactions': 5,
+    };
+
     DATA = {};
     wb.SheetNames.forEach(name => {
-      DATA[name] = XLSX.utils.sheet_to_json(wb.Sheets[name], {defval:'', raw:true});
+      DATA[name] = XLSX.utils.sheet_to_json(
+        wb.Sheets[name], {range: SHEET_RANGES[name] ?? 0, defval:'', raw:true}
+      );
     });
 
     if (USER) renderCurrentView();
@@ -568,14 +577,13 @@ function renderMyBalance() {
     String(r['Player Name'] || Object.values(r)[0] || '').trim() === USER.name
   );
 
-  let net = 0, duesOwed = 0, duesPaid = 0, eventCosts = 0, paidUpfront = 0, standing = '';
+  let net = 0, charged = 0, totalPaid = 0, paidUpfront = 0, standing = '';
   if (myBal) {
-    duesOwed    = parseFloat(myBal['Dues Owed'] || Object.values(myBal)[2]) || 0;
-    duesPaid    = parseFloat(myBal['Dues Paid'] || Object.values(myBal)[3]) || 0;
-    eventCosts  = parseFloat(myBal['Event Costs Owed'] || Object.values(myBal)[4]) || 0;
-    paidUpfront = parseFloat(myBal['Paid Upfront For Team'] || Object.values(myBal)[5]) || 0;
-    net         = parseFloat(myBal['Net Balance'] || Object.values(myBal)[6]) || 0;
-    standing    = String(myBal['Status'] || Object.values(myBal)[7] || '').trim();
+    charged     = parseFloat(myBal['Total Charged ($)'] || Object.values(myBal)[1]) || 0;
+    totalPaid   = parseFloat(myBal['Total Paid ($)']    || Object.values(myBal)[2]) || 0;
+    paidUpfront = parseFloat(myBal['Paid Upfront For Team ($)'] || Object.values(myBal)[3]) || 0;
+    net         = parseFloat(myBal['Net Balance ($)']   || Object.values(myBal)[4]) || 0;
+    standing    = String(myBal['Status']                || Object.values(myBal)[5] || '').trim();
   }
 
   const heroClass = Math.abs(net) < 0.5 ? 'clear' : net > 0 ? 'owed' : 'credit';
@@ -591,48 +599,52 @@ function renderMyBalance() {
     </div>`;
 
   document.getElementById('player-stats').innerHTML = `
-    <div class="stat-card"><div class="stat-label">Dues owed</div><div class="stat-value">${fmt$(duesOwed)}</div></div>
-    <div class="stat-card"><div class="stat-label">Dues paid</div><div class="stat-value green">${fmt$(duesPaid)}</div></div>
-    <div class="stat-card"><div class="stat-label">Dues remaining</div><div class="stat-value ${duesOwed-duesPaid>0?'red':'green'}">${fmt$(duesOwed-duesPaid)}</div></div>`;
+    <div class="stat-card"><div class="stat-label">Total charged</div><div class="stat-value">${fmt$(charged)}</div></div>
+    <div class="stat-card"><div class="stat-label">Total paid</div><div class="stat-value green">${fmt$(totalPaid)}</div></div>
+    <div class="stat-card"><div class="stat-label">Net balance</div><div class="stat-value ${net>0.5?'red':net<-0.5?'navy':'green'}">${fmt$(Math.abs(net))}</div></div>`;
 
-  // Dues progress bar
-  const pct = duesOwed > 0 ? Math.min(100, Math.round(duesPaid/duesOwed*100)) : 100;
+  // Payment progress bar
+  const pct = charged > 0 ? Math.min(100, Math.round(totalPaid/charged*100)) : 100;
   const progressHtml = `
     <div class="card">
-      <div class="card-title">💵 Dues Progress</div>
+      <div class="card-title">💵 Payment Progress</div>
       <div class="progress-wrap">
-        <div class="progress-label"><span>Paid ${fmt$(duesPaid)} of ${fmt$(duesOwed)}</span><span>${pct}%</span></div>
+        <div class="progress-label"><span>Paid ${fmt$(totalPaid)} of ${fmt$(charged)}</span><span>${pct}%</span></div>
         <div class="progress-track"><div class="progress-fill" style="width:${pct}%;background:${pct===100?'var(--green)':'var(--gold)'}"></div></div>
       </div>
     </div>`;
 
   // Find attendance rows for this player
   const attSheet = DATA['Attendance'] || [];
-  const myAttRow = attSheet.find(r =>
-    String(r['Full Name'] || Object.values(r)[0] || '').trim() === USER.name
+  const ATT_SKIP_BAL = new Set(['Cost per Person ($) [auto]', 'Total Attendees', 'Total Cost ($)']);
+  const costPerPersonRow = attSheet.find(r =>
+    String(r['Player Name'] || Object.values(r)[0] || '').trim() === 'Cost per Person ($) [auto]'
   );
+  const myAttRow = attSheet.find(r => {
+    const n = String(r['Player Name'] || r['Full Name'] || Object.values(r)[0] || '').trim();
+    return n === USER.name && !ATT_SKIP_BAL.has(n);
+  });
   const evtRows = getEventsRows();
+  // attSheet[0] is the Cost per Person row and has all event names as keys
   const evtHeaders = attSheet.length > 0
-    ? Object.keys(attSheet[0]).filter(k => !['Full Name','Access Code'].includes(k) && !k.startsWith('__'))
+    ? Object.keys(attSheet[0]).filter(k => !['Player Name','Full Name','Access Code'].includes(k) && !k.startsWith('__'))
     : [];
 
   let evtBodyHtml = '';
   if (myAttRow && evtRows.length > 0) {
     evtRows.slice(0, 30).forEach((evt, idx) => {
       const evtName = String(evt['Event Name'] || Object.values(evt)[0] || '').trim();
-      const evtDate = fmtDate(evt['Date'] || Object.values(evt)[1]);
-      const evtCat  = String(evt['Category'] || Object.values(evt)[2] || '').trim();
-      const evtActual = parseFloat(evt['Actual Cost ($)'] || Object.values(evt)[6]) || 0;
-      // attendance value: headers in att sheet match event names or Event N
-      const attKey = evtHeaders[idx] || `Event ${idx+1}`;
-      const attVal = String(myAttRow[attKey] || '').trim().toUpperCase() || '—';
-      const costShare = attVal === '1' && evtActual > 0
-        ? fmt$(evtActual / Math.max(1, parseInt(evt['# Expected'] || Object.values(evt)[4]) || 1))
-        : '—';
+      const evtDate = fmtDate(evt['Start Date'] || Object.values(evt)[1]);
+      const evtCat  = String(evt['Category'] || Object.values(evt)[3] || '').trim();
+      const attKey  = evtHeaders[idx] || `Event ${idx+1}`;
+      const attVal  = String(myAttRow[attKey] || '').trim() || '—';
+      const dispVal = attVal === '1' ? 'Y' : attVal;
+      const costPerPerson = costPerPersonRow ? (parseFloat(costPerPersonRow[attKey]) || 0) : 0;
+      const costShare = attVal === '1' && costPerPerson > 0 ? fmt$(costPerPerson) : '—';
       evtBodyHtml += `<tr>
         <td>${esc(evtName)}</td><td>${esc(evtDate)}</td>
         <td><span class="badge badge-navy">${esc(evtCat)}</span></td>
-        <td>${statusBadge(attVal)}</td>
+        <td>${statusBadge(dispVal)}</td>
         <td>${costShare}</td></tr>`;
     });
   }
@@ -654,7 +666,7 @@ function renderMyBalance() {
 // ── ROSTER ─────────────────────────────────────────────────────────────
 function renderRoster() {
   const rows = getRosterRows();
-  const active = rows.filter(r => String(r['Status']||Object.values(r)[7]||'').trim() === 'Active');
+  const active = rows.filter(r => String(r['Status']||Object.values(r)[4]||'').trim() === 'Active');
   const coaches = rows.filter(r => TIER_MAP.coach.includes(getRoleFromRow(r)));
   const captains = rows.filter(r => TIER_MAP.captain.includes(getRoleFromRow(r)));
 
@@ -671,15 +683,15 @@ function renderRoster() {
   rows.forEach(r => {
     const name  = String(r['Full Name'] || Object.values(r)[0] || '').trim();
     const role  = getRoleFromRow(r);
-    const dues  = parseFloat(r['Dues Amount'] || Object.values(r)[4]) || 0;
-    const paidS = String(r['Dues Paid?'] || Object.values(r)[5] || '').trim();
-    const stat  = String(r['Status'] || Object.values(r)[7] || '').trim();
+    const dues  = parseFloat(r['Dues Amount ($)'] || Object.values(r)[1]) || 0;
+    const paidS = String(r['Dues Paid?'] || Object.values(r)[2] || '').trim();
+    const stat  = String(r['Status'] || Object.values(r)[4] || '').trim();
 
     let netHtml = '—';
     if (showBalance) {
       const balRow = balRows.find(b => String(b['Player Name']||Object.values(b)[0]||'').trim() === name);
       if (balRow) {
-        const net = parseFloat(balRow['Net Balance'] || Object.values(balRow)[6]) || 0;
+        const net = parseFloat(balRow['Net Balance ($)'] || Object.values(balRow)[4]) || 0;
         netHtml = `<span style="font-weight:600;color:${Math.abs(net)<0.5?'var(--green)':net>0?'var(--red)':'var(--navy)'}">${fmt$(net)}</span>`;
       }
     }
@@ -689,7 +701,7 @@ function renderRoster() {
       <td><span class="badge badge-navy">${esc(role||'—')}</span></td>
       <td>${fmt$(dues)}</td>
       <td>${statusBadge(paidS)}</td>
-      ${showBalance ? `<td>${netHtml}</td><td>${balanceBadge(parseFloat((balRows.find(b=>String(b['Player Name']||Object.values(b)[0]||'').trim()===name)||{})['Net Balance']||''))}</td>` : ''}
+      ${showBalance ? `<td>${netHtml}</td><td>${balanceBadge(parseFloat((balRows.find(b=>String(b['Player Name']||Object.values(b)[0]||'').trim()===name)||{})['Net Balance ($)']||''))}</td>` : ''}
     </tr>`;
   });
   if (!html) html = '<tr class="empty-row"><td colspan="6">No roster data found</td></tr>';
@@ -708,8 +720,8 @@ function renderEvents() {
   const rows = getEventsRows();
   const totalBudget = rows.reduce((s,r) => s + (parseFloat(r['Budgeted Cost ($)']||Object.values(r)[5])||0), 0);
   const totalActual = rows.reduce((s,r) => s + (parseFloat(r['Actual Cost ($)']||Object.values(r)[6])||0), 0);
-  const tourns = rows.filter(r => String(r['Category']||Object.values(r)[2]||'').trim() === 'Tournament').length;
-  const pracs  = rows.filter(r => String(r['Category']||Object.values(r)[2]||'').trim() === 'Practice').length;
+  const tourns = rows.filter(r => String(r['Category']||Object.values(r)[3]||'').trim() === 'Tournament').length;
+  const pracs  = rows.filter(r => String(r['Category']||Object.values(r)[3]||'').trim() === 'Practice').length;
 
   document.getElementById('events-stats').innerHTML = `
     <div class="stat-card"><div class="stat-label">Total events</div><div class="stat-value navy">${rows.length}</div></div>
@@ -724,9 +736,9 @@ function renderEvents() {
   let html = '';
   rows.forEach(r => {
     const name    = String(r['Event Name']||Object.values(r)[0]||'').trim();
-    const date    = fmtDate(r['Date']||Object.values(r)[1]);
-    const cat     = String(r['Category']||Object.values(r)[2]||'').trim();
-    const loc     = String(r['Location']||Object.values(r)[3]||'').trim();
+    const date    = fmtDate(r['Start Date']||Object.values(r)[1]);
+    const cat     = String(r['Category']||Object.values(r)[3]||'').trim();
+    const loc     = String(r['Location']||Object.values(r)[4]||'').trim();
     const budget  = parseFloat(r['Budgeted Cost ($)']||Object.values(r)[5]) || 0;
     const actual  = parseFloat(r['Actual Cost ($)']||Object.values(r)[6]) || 0;
     const variance= budget - actual;
@@ -753,17 +765,17 @@ function renderAttendance() {
     return;
   }
 
-  // Find data rows (skip header meta-rows like Date, Category, Cost, Totals)
+  // Skip the three summary rows that sit between the header and actual player rows
+  const ATT_SKIP = new Set(['Cost per Person ($) [auto]', 'Total Attendees', 'Total Cost ($)']);
   const playerRows = attSheet.filter(r => {
-    const name = String(r['Full Name'] || Object.values(r)[0] || '').trim();
-    const skip = ['Full Name','Date →','Category →','Cost per person ($) →',
-                  'Total Attendees →','Total Cost →','← Player Name','1 = Attended'];
-    return name && !skip.some(s => name.includes(s));
+    const name = String(r['Player Name'] || r['Full Name'] || Object.values(r)[0] || '').trim();
+    return name && !ATT_SKIP.has(name);
   });
 
+  // attSheet[0] is the Cost per Person row — it carries all event names as column keys
   const evtCols = Object.keys(attSheet[0] || {}).filter(k =>
-    !['Full Name','Access Code'].includes(k) && !k.startsWith('__')
-  ).slice(0, 20); // limit to 20 events for readability
+    !['Player Name','Full Name','Access Code'].includes(k) && !k.startsWith('__')
+  ).slice(0, 20);
 
   const evtRows = getEventsRows();
 
@@ -777,14 +789,15 @@ function renderAttendance() {
 
   let bodyHtml = '';
   playerRows.forEach(r => {
-    const name = String(r['Full Name']||Object.values(r)[0]||'').trim();
-    const attended = evtCols.filter(c => String(r[c]||'').trim().toUpperCase() === 'Y').length;
-    const total    = evtCols.filter(c => String(r[c]||'').trim() !== '').length;
+    const name = String(r['Player Name']||r['Full Name']||Object.values(r)[0]||'').trim();
+    const attended = evtCols.filter(c => String(r[c]||'').trim() === '1').length;
+    const total    = evtCols.length;
     const rate     = total > 0 ? Math.round(attended/total*100) : 0;
 
     bodyHtml += `<tr><td><strong>${esc(name)}</strong></td>`;
     evtCols.forEach(col => {
-      const val = String(r[col]||'').trim().toUpperCase();
+      const raw = String(r[col]||'').trim();
+      const val = raw === '1' ? 'Y' : raw;
       bodyHtml += `<td style="text-align:center">${val ? statusBadge(val) : '<span style="color:var(--muted)">—</span>'}</td>`;
     });
     bodyHtml += `<td style="text-align:center;font-weight:600">${attended}/${total}</td>`;
@@ -837,8 +850,8 @@ function renderStanding() {
 
   const enriched = balRows.map(r => {
     const name   = String(r['Player Name'] || Object.values(r)[0] || '').trim();
-    const net    = parseFloat(r['Net Balance'] || Object.values(r)[3]) || 0;
-    const status = String(r['Status'] || Object.values(r)[4] || '').trim();
+    const net    = parseFloat(r['Net Balance ($)'] || Object.values(r)[4]) || 0;
+    const status = String(r['Status'] || Object.values(r)[5] || '').trim();
     const rr     = rosterRows.find(p => String(p['Full Name'] || Object.values(p)[0] || '').trim() === name);
     const role   = getRoleFromRow(rr) || '—';
     return { name, net, status, role };
@@ -920,11 +933,11 @@ function renderDashboard() {
 
   // Enrich balance rows with role
   const enriched = balRows.map(r => {
-    const name    = String(r['Player Name']    || Object.values(r)[0] || '').trim();
-    const charged = parseFloat(r['Total Charged'] || r['Dues Owed']  || Object.values(r)[1]) || 0;
-    const paid    = parseFloat(r['Paid Upfront For Team'] || r['Dues Paid'] || Object.values(r)[2]) || 0;
-    const net     = parseFloat(r['Net Balance'] || Object.values(r)[3]) || 0;
-    const status  = String(r['Status']          || Object.values(r)[4] || '').trim();
+    const name    = String(r['Player Name']       || Object.values(r)[0] || '').trim();
+    const charged = parseFloat(r['Total Charged ($)'] || Object.values(r)[1]) || 0;
+    const paid    = parseFloat(r['Total Paid ($)']    || Object.values(r)[2]) || 0;
+    const net     = parseFloat(r['Net Balance ($)']   || Object.values(r)[4]) || 0;
+    const status  = String(r['Status']                || Object.values(r)[5] || '').trim();
     const rr      = rosterRows.find(p => String(p['Full Name']||Object.values(p)[0]||'').trim() === name);
     const role    = getRoleFromRow(rr) || '—';
     return { name, charged, paid, net, status, role };
@@ -994,7 +1007,7 @@ function renderDashboard() {
 
   // Events overview
   const cats = ['Tournament','Practice','Fundraiser','Other'];
-  const catCounts = cats.map(c => evtRows.filter(r => String(r['Category']||Object.values(r)[2]||'').trim() === c).length);
+  const catCounts = cats.map(c => evtRows.filter(r => String(r['Category']||Object.values(r)[3]||'').trim() === c).length);
   const catColors = ['navy','','green',''];
   document.getElementById('dash-events').innerHTML = `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:1rem">
