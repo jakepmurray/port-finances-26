@@ -390,7 +390,7 @@ function tryLogin() {
   if (TIER_MAP.coach.includes(role)) tier = 'coach';
   else if (TIER_MAP.captain.includes(role)) tier = 'captain';
 
-  USER = { name, code, role, tier, row: p };
+  USER = { name, code, role, tier, row: accessRow };
   document.getElementById('login-error').textContent = '';
 
   document.getElementById('login-screen').style.display = 'none';
