@@ -116,6 +116,7 @@ tr:hover td { background: #f8fafc; }
 .badge { display: inline-block; padding: 3px 9px; border-radius: 20px; font-size: 11px; font-weight: 600; }
 .badge-green { background: #dcfce7; color: #166534; }
 .badge-red { background: #fee2e2; color: #991b1b; }
+.badge-gold { background: #fef3c7; color: #854d0e; }
 .badge-amber { background: #fef3c7; color: #92400e; }
 .badge-blue { background: #dbeafe; color: #1e40af; }
 .badge-gray { background: #f1f5f9; color: #475569; }
@@ -271,6 +272,23 @@ tr:hover td { background: #f8fafc; }
         <div class="table-wrap">
           <table><thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Type</th><th>Amount</th><th>Status</th></tr></thead>
           <tbody id="tx-tbody"></tbody></table>
+        </div>
+      </div>
+    </div>
+
+    <!-- FUNDRAISERS (Coach / Treasurer) -->
+    <div id="section-fundraisers" class="section">
+      <div class="stat-grid cols-3" id="fundraiser-stats"></div>
+      <div class="card">
+        <div class="card-title">🎪 Fundraiser Tracker</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Date</th><th>Description</th><th>Collector</th>
+              <th style="text-align:right">Amount</th><th>Status</th>
+            </tr></thead>
+            <tbody id="fundraiser-tbody"></tbody>
+          </table>
         </div>
       </div>
     </div>
@@ -482,8 +500,8 @@ function signOut() {
 const TABS = {
   player:    [['mybalance','🥏 My Balance']],
   captain:   [['standing','🏅 Team Standing'],['attendance','✅ Attendance']],
-  coach:     [['standing','🏅 Team Standing'],['attendance','✅ Attendance']],
-  treasurer: [['dashboard','📊 Dashboard'],['standing','🏅 Team Standing'],['roster','👥 Roster'],['events','📋 Events'],['attendance','✅ Attendance'],['transactions','💳 Transactions']],
+  coach:     [['standing','🏅 Team Standing'],['attendance','✅ Attendance'],['fundraisers','🎪 Fundraisers']],
+  treasurer: [['dashboard','📊 Dashboard'],['standing','🏅 Team Standing'],['roster','👥 Roster'],['events','📋 Events'],['attendance','✅ Attendance'],['transactions','💳 Transactions'],['fundraisers','🎪 Fundraisers']],
 };
 
 let currentSection = null;
@@ -526,6 +544,7 @@ function renderSection(id) {
     transactions: renderTransactions,
     dashboard:    renderDashboard,
     standing:     renderStanding,
+    fundraisers:  renderFundraisers,
   };
   if (renders[id]) renders[id]();
 }
@@ -824,7 +843,7 @@ function renderAttendance() {
 // ── TRANSACTIONS ────────────────────────────────────────────────────────
 function renderTransactions() {
   const rows = getTxRows();
-  const totalIn  = rows.filter(r=>String(r['Type']||Object.values(r)[3]||'').trim()==='Income').reduce((s,r)=>s+(parseFloat(r['Amount ($)']||Object.values(r)[5])||0),0);
+  const totalIn  = rows.filter(r=>{const t=String(r['Type']||Object.values(r)[3]||'').trim();return t==='Income'||t==='Fundraiser';}).reduce((s,r)=>s+(parseFloat(r['Amount ($)']||Object.values(r)[5])||0),0);
   const totalOut = rows.filter(r=>String(r['Type']||Object.values(r)[3]||'').trim()==='Expense').reduce((s,r)=>s+(parseFloat(r['Amount ($)']||Object.values(r)[5])||0),0);
 
   document.getElementById('tx-stats').innerHTML = `
@@ -844,8 +863,8 @@ function renderTransactions() {
     html += `<tr>
       <td>${esc(date)}</td><td>${esc(desc)}</td>
       <td><span class="badge badge-navy">${esc(cat)}</span></td>
-      <td><span class="badge ${type==='Income'?'badge-green':'badge-red'}">${esc(type)}</span></td>
-      <td style="font-weight:600;color:${type==='Income'?'var(--green)':'var(--red)'}">${type==='Income'?'+':'-'}${fmt$(amt)}</td>
+      <td><span class="badge ${type==='Income'?'badge-green':type==='Fundraiser'?'badge-gold':'badge-red'}">${esc(type)}</span></td>
+      <td style="font-weight:600;color:${type==='Expense'?'var(--red)':'var(--green)'}">${type==='Expense'?'-':'+'}${fmt$(amt)}</td>
       <td>${statusBadge(stat)}</td>
     </tr>`;
   });
@@ -927,6 +946,76 @@ function renderStanding() {
   document.getElementById('standing-tbody').innerHTML = html;
 }
 
+// ── FUNDRAISERS (Coach / Treasurer) ─────────────────────────────────────
+function renderFundraisers() {
+  const txRows = getTxRows();
+  const fundraisers = txRows.filter(r =>
+    String(r['Type']||Object.values(r)[3]||'').trim() === 'Fundraiser'
+  );
+
+  const totalRaised  = fundraisers.reduce((s,r) => s+(parseFloat(r['Amount ($)']||Object.values(r)[5])||0), 0);
+  const pendingRows  = fundraisers.filter(r => String(r['Status']||Object.values(r)[8]||'').trim() === 'Pending');
+  const clearedRows  = fundraisers.filter(r => String(r['Status']||Object.values(r)[8]||'').trim() === 'Cleared');
+  const totalPending = pendingRows.reduce((s,r) => s+(parseFloat(r['Amount ($)']||Object.values(r)[5])||0), 0);
+  const totalCleared = clearedRows.reduce((s,r) => s+(parseFloat(r['Amount ($)']||Object.values(r)[5])||0), 0);
+
+  document.getElementById('fundraiser-stats').innerHTML = `
+    <div class="stat-card">
+      <div class="stat-label">Total Raised</div>
+      <div class="stat-value green">${fmt$(totalRaised)}</div>
+      <div class="stat-sub">${fundraisers.length} transaction${fundraisers.length!==1?'s':''}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Pending Deposit</div>
+      <div class="stat-value ${totalPending>0?'red':'green'}">${fmt$(totalPending)}</div>
+      <div class="stat-sub">${pendingRows.length===0?'All cleared':pendingRows.length+' collector'+(pendingRows.length!==1?'s':'')+' still holding'}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Deposited</div>
+      <div class="stat-value green">${fmt$(totalCleared)}</div>
+      <div class="stat-sub">${clearedRows.length} cleared</div>
+    </div>`;
+
+  // Group by Linked Event, fall back to Description
+  const groups = {};
+  fundraisers.forEach(r => {
+    const key = String(r['Linked Event']||Object.values(r)[6]||r['Description']||Object.values(r)[1]||'Unknown').trim() || 'Unknown';
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(r);
+  });
+
+  let html = '';
+  if (Object.keys(groups).length === 0) {
+    html = `<tr class="empty-row"><td colspan="5">No fundraiser transactions yet. In the spreadsheet, set Type = "Fundraiser" on any transaction to track it here.</td></tr>`;
+  } else {
+    Object.entries(groups).forEach(([evt, rows]) => {
+      const evtTotal   = rows.reduce((s,r)=>s+(parseFloat(r['Amount ($)']||Object.values(r)[5])||0),0);
+      const allCleared = rows.every(r=>String(r['Status']||Object.values(r)[8]||'').trim()==='Cleared');
+      const anyPending = rows.some(r=>String(r['Status']||Object.values(r)[8]||'').trim()==='Pending');
+      html += `<tr style="background:var(--navy-light)">
+        <td colspan="3" style="font-weight:700;color:var(--navy);padding:.6rem 1rem">${esc(evt)}</td>
+        <td style="font-weight:700;text-align:right;color:var(--green);padding:.6rem 1rem">${fmt$(evtTotal)}</td>
+        <td style="padding:.6rem 1rem">${allCleared?'<span class="badge badge-green">All Cleared ✓</span>':anyPending?'<span class="badge badge-red">Pending Deposit</span>':''}</td>
+      </tr>`;
+      rows.forEach(r => {
+        const date      = fmtDate(r['Date']||Object.values(r)[0]);
+        const desc      = String(r['Description']||Object.values(r)[1]||'').trim();
+        const collector = String(r['Paid By']||Object.values(r)[4]||'—').trim();
+        const amt       = parseFloat(r['Amount ($)']||Object.values(r)[5])||0;
+        const stat      = String(r['Status']||Object.values(r)[8]||'').trim();
+        html += `<tr>
+          <td style="padding-left:2rem;color:var(--muted);font-size:13px">${esc(date)}</td>
+          <td>${esc(desc)}</td>
+          <td><strong>${esc(collector)}</strong><span style="font-size:11px;color:var(--muted);margin-left:4px">holds money</span></td>
+          <td style="text-align:right;font-weight:600;color:var(--green)">${fmt$(amt)}</td>
+          <td>${statusBadge(stat)}</td>
+        </tr>`;
+      });
+    });
+  }
+  document.getElementById('fundraiser-tbody').innerHTML = html;
+}
+
 // ── DASHBOARD (Treasurer only) ──────────────────────────────────────────
 function renderDashboard() {
   const balRows    = getBalanceRows();
@@ -934,8 +1023,8 @@ function renderDashboard() {
   const txRows     = getTxRows();
   const evtRows    = getEventsRows();
 
-  // Totals from Transactions
-  const totalIn  = txRows.filter(r => String(r['Type']||Object.values(r)[3]||'').trim() === 'Income')
+  // Totals from Transactions (Fundraiser counts as income, matching the spreadsheet formula)
+  const totalIn  = txRows.filter(r => { const t=String(r['Type']||Object.values(r)[3]||'').trim(); return t==='Income'||t==='Fundraiser'; })
                          .reduce((s, r) => s + (parseFloat(r['Amount ($)']||Object.values(r)[5])||0), 0);
   const totalOut = txRows.filter(r => String(r['Type']||Object.values(r)[3]||'').trim() === 'Expense')
                          .reduce((s, r) => s + (parseFloat(r['Amount ($)']||Object.values(r)[5])||0), 0);
