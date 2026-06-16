@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c ' *)",
+      "PowerShell(Get-Command python3, py, pip, node -ErrorAction SilentlyContinue)",
+      "PowerShell(node --version)"
+    ]
+  }
+}
