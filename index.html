@@ -543,8 +543,22 @@ function getTxRows() {
 function getBalanceRows() {
   return (DATA['Player Balances'] || []).filter(r => {
     const name = String(r['Player Name'] || Object.values(r)[0] || '').trim();
-    return name && !['Player Name','PLAYER'].includes(name);
+    if (!name) return false;
+    if (!isNaN(Number(name))) return false;                      // skip numeric rows
+    if (/total|owed|cost|average|summary/i.test(name)) return false; // skip label rows
+    if (['Player Name','PLAYER','Full Name'].includes(name)) return false;
+    return true;
   });
+}
+
+const KNOWN_ROLES = ['Coach','Treasurer','Manager','Captain','Player'];
+function getRoleFromRow(r) {
+  if (!r) return '';
+  // Try named column first
+  const named = String(r['Role'] || r['Player Role'] || '').trim();
+  if (KNOWN_ROLES.includes(named)) return named;
+  // Scan all values for a known role (handles renamed/shifted columns)
+  return Object.values(r).map(v => String(v||'').trim()).find(v => KNOWN_ROLES.includes(v)) || '';
 }
 
 // ── MY BALANCE (player view) ───────────────────────────────────────────
@@ -641,8 +655,8 @@ function renderMyBalance() {
 function renderRoster() {
   const rows = getRosterRows();
   const active = rows.filter(r => String(r['Status']||Object.values(r)[7]||'').trim() === 'Active');
-  const coaches = rows.filter(r => TIER_MAP.coach.includes(String(r['Role']||Object.values(r)[6]||'').trim()));
-  const captains = rows.filter(r => TIER_MAP.captain.includes(String(r['Role']||Object.values(r)[6]||'').trim()));
+  const coaches = rows.filter(r => TIER_MAP.coach.includes(getRoleFromRow(r)));
+  const captains = rows.filter(r => TIER_MAP.captain.includes(getRoleFromRow(r)));
 
   document.getElementById('roster-stats').innerHTML = `
     <div class="stat-card"><div class="stat-label">Total players</div><div class="stat-value navy">${rows.length}</div></div>
@@ -656,7 +670,7 @@ function renderRoster() {
   let html = '';
   rows.forEach(r => {
     const name  = String(r['Full Name'] || Object.values(r)[0] || '').trim();
-    const role  = String(r['Role'] || Object.values(r)[6] || '').trim();
+    const role  = getRoleFromRow(r);
     const dues  = parseFloat(r['Dues Amount'] || Object.values(r)[4]) || 0;
     const paidS = String(r['Dues Paid?'] || Object.values(r)[5] || '').trim();
     const stat  = String(r['Status'] || Object.values(r)[7] || '').trim();
@@ -826,7 +840,7 @@ function renderStanding() {
     const net    = parseFloat(r['Net Balance'] || Object.values(r)[3]) || 0;
     const status = String(r['Status'] || Object.values(r)[4] || '').trim();
     const rr     = rosterRows.find(p => String(p['Full Name'] || Object.values(p)[0] || '').trim() === name);
-    const role   = rr ? String(rr['Role'] || Object.values(rr)[1] || '').trim() : '—';
+    const role   = getRoleFromRow(rr) || '—';
     return { name, net, status, role };
   }).filter(p => p.name);
 
@@ -912,7 +926,7 @@ function renderDashboard() {
     const net     = parseFloat(r['Net Balance'] || Object.values(r)[3]) || 0;
     const status  = String(r['Status']          || Object.values(r)[4] || '').trim();
     const rr      = rosterRows.find(p => String(p['Full Name']||Object.values(p)[0]||'').trim() === name);
-    const role    = rr ? String(rr['Role']||Object.values(rr)[1]||'').trim() : '—';
+    const role    = getRoleFromRow(rr) || '—';
     return { name, charged, paid, net, status, role };
   }).filter(p => p.name);
 
