@@ -578,6 +578,13 @@ function getBalanceRows() {
     return true;
   });
 }
+function getAttendanceRows() {
+  return (DATA['Attendance'] || []).filter(r => {
+    const name = String(r['Player Name'] || Object.values(r)[0] || '').trim();
+    return name && !['Player Name','ATTENDANCE','Cost per Person ($) [auto]'].includes(name)
+      && isNaN(Number(name));
+  });
+}
 
 const KNOWN_ROLES = ['Coach','Treasurer','Support','Captain','Player'];
 function getRoleFromRow(r) {
@@ -602,6 +609,55 @@ function buildAcMaps() {
   return { roleMap, statusMap };
 }
 
+// Computes Total Charged per player from raw Events + Attendance data.
+// This avoids relying on xlsx cached formula values (openpyxl writes formulas
+// without cached values, so XLSX.js would read 0 until Excel recalculates).
+function buildChargedMap() {
+  const evtRows = getEventsRows();
+  const attRows = getAttendanceRows();
+  const { roleMap, statusMap } = buildAcMaps();
+  const activePlayers = Object.keys(roleMap).filter(n =>
+    TIER_MAP.player.includes(roleMap[n]) && statusMap[n] === 'Active'
+  );
+  const activeCount = activePlayers.length;
+
+  // Cost per person for each event
+  const evtCpp = {};
+  evtRows.forEach(e => {
+    const eName = String(e['Event Name']  || Object.values(e)[0] || '').trim();
+    const split = String(e['Split Method']|| '').trim();
+    const cost  = parseFloat(e['Actual Cost ($)'] || Object.values(e)[6]) || 0;
+    const cat   = String(e['Category']   || Object.values(e)[3] || '').trim();
+    if (!eName || cat === 'Fundraiser' || cost === 0) { evtCpp[eName] = 0; return; }
+    if (split === 'Equal Split') {
+      evtCpp[eName] = activeCount > 0 ? cost / activeCount : 0;
+    } else if (split === 'Attendance') {
+      const cnt = attRows.filter(r => Number(r[eName]) === 1).length;
+      evtCpp[eName] = cnt > 0 ? cost / cnt : 0;
+    } else {
+      evtCpp[eName] = 0;
+    }
+  });
+
+  // Accumulate total charged per player
+  const chargedMap = {};
+  evtRows.forEach(e => {
+    const eName = String(e['Event Name']  || Object.values(e)[0] || '').trim();
+    const split = String(e['Split Method']|| '').trim();
+    const cpp   = evtCpp[eName] || 0;
+    if (!cpp) return;
+    if (split === 'Equal Split') {
+      activePlayers.forEach(p => { chargedMap[p] = (chargedMap[p] || 0) + cpp; });
+    } else if (split === 'Attendance') {
+      attRows.forEach(r => {
+        const p = String(r['Player Name'] || Object.values(r)[0] || '').trim();
+        if (p && Number(r[eName]) === 1) chargedMap[p] = (chargedMap[p] || 0) + cpp;
+      });
+    }
+  });
+  return { chargedMap, evtCpp };
+}
+
 // ── MY BALANCE (player view) ───────────────────────────────────────────
 function renderMyBalance() {
   const balRows = getBalanceRows();
@@ -609,13 +665,14 @@ function renderMyBalance() {
     String(r['Player Name'] || Object.values(r)[0] || '').trim() === USER.name
   );
 
+  const { chargedMap, evtCpp } = buildChargedMap();
   let net = 0, charged = 0, totalPaid = 0, paidUpfront = 0, standing = '';
   if (myBal) {
-    charged     = parseFloat(myBal['Total Charged ($)'] || Object.values(myBal)[1]) || 0;
-    totalPaid   = parseFloat(myBal['Total Paid ($)']    || Object.values(myBal)[2]) || 0;
-    paidUpfront = parseFloat(myBal['Paid Upfront For Team ($)'] || Object.values(myBal)[3]) || 0;
-    net         = parseFloat(myBal['Net Balance ($)']   || Object.values(myBal)[4]) || 0;
-    standing    = String(myBal['Status']                || Object.values(myBal)[5] || '').trim();
+    charged     = chargedMap[USER.name] || 0;
+    totalPaid   = parseFloat(myBal['Total Paid ($)']             || Object.values(myBal)[2]) || 0;
+    paidUpfront = parseFloat(myBal['Paid Upfront For Team ($)']  || Object.values(myBal)[3]) || 0;
+    net         = charged - totalPaid - paidUpfront;
+    standing    = String(myBal['Status']                         || Object.values(myBal)[5] || '').trim();
   }
 
   const heroClass = Math.abs(net) < 0.5 ? 'clear' : net > 0 ? 'owed' : 'credit';
@@ -646,40 +703,29 @@ function renderMyBalance() {
       </div>
     </div>`;
 
-  // Find attendance rows for this player
-  const attSheet = DATA['Attendance'] || [];
-  const ATT_SKIP_BAL = new Set(['Cost per Person ($) [auto]', 'Total Attendees', 'Total Cost ($)']);
-  const costPerPersonRow = attSheet.find(r =>
-    String(r['Player Name'] || Object.values(r)[0] || '').trim() === 'Cost per Person ($) [auto]'
+  // Find attendance row for this player using named event columns
+  const myAttRow = getAttendanceRows().find(r =>
+    String(r['Player Name'] || Object.values(r)[0] || '').trim() === USER.name
   );
-  const myAttRow = attSheet.find(r => {
-    const n = String(r['Player Name'] || r['Full Name'] || Object.values(r)[0] || '').trim();
-    return n === USER.name && !ATT_SKIP_BAL.has(n);
-  });
   const evtRows = getEventsRows();
-  // attSheet[0] is the Cost per Person row and has all event names as keys
-  const evtHeaders = attSheet.length > 0
-    ? Object.keys(attSheet[0]).filter(k => !['Player Name','Full Name','Access Code'].includes(k) && !k.startsWith('__'))
-    : [];
 
   let evtBodyHtml = '';
-  if (myAttRow && evtRows.length > 0) {
-    evtRows.slice(0, 30).forEach((evt, idx) => {
-      const evtName = String(evt['Event Name'] || Object.values(evt)[0] || '').trim();
-      const evtDate = fmtDate(evt['Start Date'] || Object.values(evt)[1]);
-      const evtCat  = String(evt['Category'] || Object.values(evt)[3] || '').trim();
-      const attKey  = evtHeaders[idx] || `Event ${idx+1}`;
-      const attVal  = String(myAttRow[attKey] || '').trim() || '—';
-      const dispVal = attVal === '1' ? 'Y' : attVal;
-      const costPerPerson = costPerPersonRow ? (parseFloat(costPerPersonRow[attKey]) || 0) : 0;
-      const costShare = attVal === '1' && costPerPerson > 0 ? fmt$(costPerPerson) : '—';
-      evtBodyHtml += `<tr>
-        <td>${esc(evtName)}</td><td>${esc(evtDate)}</td>
-        <td><span class="badge badge-navy">${esc(evtCat)}</span></td>
-        <td>${statusBadge(dispVal)}</td>
-        <td>${costShare}</td></tr>`;
-    });
-  }
+  evtRows.slice(0, 30).forEach(evt => {
+    const evtName  = String(evt['Event Name']  || Object.values(evt)[0] || '').trim();
+    const evtDate  = fmtDate(evt['Start Date'] || Object.values(evt)[1]);
+    const evtCat   = String(evt['Category']    || Object.values(evt)[3] || '').trim();
+    const split    = String(evt['Split Method']|| '').trim();
+    const attVal   = myAttRow ? String(myAttRow[evtName] || '').trim() : '';
+    const dispVal  = attVal === '1' ? 'Y' : attVal || '—';
+    const cpp      = evtCpp[evtName] || 0;
+    const owes     = (split === 'Equal Split' || attVal === '1') && cpp > 0;
+    const costShare = owes ? fmt$(cpp) : '—';
+    evtBodyHtml += `<tr>
+      <td>${esc(evtName)}</td><td>${esc(evtDate)}</td>
+      <td><span class="badge badge-navy">${esc(evtCat)}</span></td>
+      <td>${statusBadge(dispVal)}</td>
+      <td>${costShare}</td></tr>`;
+  });
   if (!evtBodyHtml) evtBodyHtml = '<tr class="empty-row"><td colspan="5">No event history yet</td></tr>';
 
   document.getElementById('player-events-tbody').innerHTML = evtBodyHtml;
@@ -716,31 +762,40 @@ function renderRoster() {
     <div class="stat-card"><div class="stat-label">Captains</div><div class="stat-value">${captains.length}</div></div>`;
 
   const balRows = getBalanceRows();
+  const txRows  = getTxRows();
+  const { chargedMap: rosterChargedMap } = buildChargedMap();
   const showBalance = USER.tier === 'coach';
 
   let html = '';
   rows.forEach(r => {
     const name  = getName(r);
     const role  = getRole(r);
-    const dues  = parseFloat(r['Dues Amount ($)'] || Object.values(r)[1]) || 0;
-    const paidS = String(r['Dues Paid?'] || Object.values(r)[2] || '').trim();
     const stat  = getStatus(r);
+    const dues  = rosterChargedMap[name] || 0;
 
-    let netHtml = '—';
-    if (showBalance) {
-      const balRow = balRows.find(b => String(b['Player Name']||Object.values(b)[0]||'').trim() === name);
-      if (balRow) {
-        const net = parseFloat(balRow['Net Balance ($)'] || Object.values(balRow)[4]) || 0;
-        netHtml = `<span style="font-weight:600;color:${Math.abs(net)<0.5?'var(--green)':net>0?'var(--red)':'var(--navy)'}">${fmt$(net)}</span>`;
-      }
-    }
+    // Compute Dues Paid? status from Transactions instead of relying on xlsx formula cache
+    const duesPaid = txRows.filter(tx =>
+      String(tx['Type']     || Object.values(tx)[3] || '').trim() === 'Income' &&
+      String(tx['Category'] || Object.values(tx)[2] || '').trim() === 'Dues'   &&
+      String(tx['Paid By']  || Object.values(tx)[4] || '').trim() === name
+    ).reduce((s, tx) => s + (parseFloat(tx['Amount ($)'] || Object.values(tx)[5]) || 0), 0);
+    const paidS = TIER_MAP.coach.includes(role) ? 'Waived'
+      : dues <= 0  ? ''
+      : duesPaid >= dues ? 'Paid'
+      : duesPaid > 0     ? 'Partial'
+      :                    'Unpaid';
+
+    const balRow = balRows.find(b => String(b['Player Name']||Object.values(b)[0]||'').trim() === name);
+    const bPaid  = balRow ? (parseFloat(balRow['Total Paid ($)']            || Object.values(balRow)[2]) || 0) : 0;
+    const bUpfrt = balRow ? (parseFloat(balRow['Paid Upfront For Team ($)'] || Object.values(balRow)[3]) || 0) : 0;
+    const net    = dues - bPaid - bUpfrt;
 
     html += `<tr>
       <td><strong>${esc(name)}</strong></td>
       <td><span class="badge badge-navy">${esc(role||'—')}</span></td>
       <td>${fmt$(dues)}</td>
       <td>${statusBadge(paidS)}</td>
-      ${showBalance ? `<td>${netHtml}</td><td>${balanceBadge(parseFloat((balRows.find(b=>String(b['Player Name']||Object.values(b)[0]||'').trim()===name)||{})['Net Balance ($)']||''))}</td>` : ''}
+      ${showBalance ? `<td><span style="font-weight:600;color:${Math.abs(net)<0.5?'var(--green)':net>0?'var(--red)':'var(--navy)'}">${fmt$(net)}</span></td><td>${balanceBadge(net)}</td>` : ''}
     </tr>`;
   });
   if (!html) html = '<tr class="empty-row"><td colspan="6">No roster data found</td></tr>';
@@ -899,12 +954,16 @@ function renderStanding() {
   const showAmt    = USER.role === 'Treasurer';
   const { roleMap: acRoleMap } = buildAcMaps();
 
+  const { chargedMap } = buildChargedMap();
   const enriched = balRows.map(r => {
-    const name   = String(r['Player Name'] || Object.values(r)[0] || '').trim();
-    const net    = parseFloat(r['Net Balance ($)'] || Object.values(r)[4]) || 0;
-    const status = String(r['Status'] || Object.values(r)[5] || '').trim();
-    const rr     = rosterRows.find(p => String(p['Full Name'] || Object.values(p)[0] || '').trim() === name);
-    const role   = acRoleMap[name] || getRoleFromRow(rr) || '—';
+    const name    = String(r['Player Name'] || Object.values(r)[0] || '').trim();
+    const charged = chargedMap[name] || 0;
+    const paid    = parseFloat(r['Total Paid ($)']            || Object.values(r)[2]) || 0;
+    const upfront = parseFloat(r['Paid Upfront For Team ($)'] || Object.values(r)[3]) || 0;
+    const net     = charged - paid - upfront;
+    const status  = String(r['Status']      || Object.values(r)[5] || '').trim();
+    const rr      = rosterRows.find(p => String(p['Full Name'] || Object.values(p)[0] || '').trim() === name);
+    const role    = acRoleMap[name] || getRoleFromRow(rr) || '—';
     return { name, net, status, role };
   }).filter(p => p.name);
 
@@ -1053,13 +1112,15 @@ function renderDashboard() {
   const pendingTx = txRows.filter(r => String(r['Status']||Object.values(r)[8]||'').trim() === 'Pending').length;
   const teamNet   = totalIn - totalOut;
 
-  // Enrich balance rows with role
+  // Enrich balance rows — compute charged from raw data, not xlsx cache
+  const { chargedMap } = buildChargedMap();
   const enriched = balRows.map(r => {
-    const name    = String(r['Player Name']       || Object.values(r)[0] || '').trim();
-    const charged = parseFloat(r['Total Charged ($)'] || Object.values(r)[1]) || 0;
-    const paid    = parseFloat(r['Total Paid ($)']    || Object.values(r)[2]) || 0;
-    const net     = parseFloat(r['Net Balance ($)']   || Object.values(r)[4]) || 0;
-    const status  = String(r['Status']                || Object.values(r)[5] || '').trim();
+    const name    = String(r['Player Name']            || Object.values(r)[0] || '').trim();
+    const charged = chargedMap[name] || 0;
+    const paid    = parseFloat(r['Total Paid ($)']     || Object.values(r)[2]) || 0;
+    const upfront = parseFloat(r['Paid Upfront For Team ($)'] || Object.values(r)[3]) || 0;
+    const net     = charged - paid - upfront;
+    const status  = String(r['Status']                 || Object.values(r)[5] || '').trim();
     const rr      = rosterRows.find(p => String(p['Full Name']||Object.values(p)[0]||'').trim() === name);
     const role    = acRoleMap[name] || getRoleFromRow(rr) || '—';
     return { name, charged, paid, net, status, role };
@@ -1094,9 +1155,12 @@ function renderDashboard() {
       <div class="stat-sub">${nSettled} of ${enriched.length} settled</div>
     </div>`;
 
-  // Financial overview
-  const totalBudget = evtRows.reduce((s, r) => s + (parseFloat(r['Budgeted Cost ($)']||Object.values(r)[5])||0), 0);
-  const totalActual = evtRows.reduce((s, r) => s + (parseFloat(r['Actual Cost ($)']  ||Object.values(r)[6])||0), 0);
+  // Financial overview — exclude Fundraiser events from expense totals
+  const nonFundraiserEvts = evtRows.filter(r => String(r['Category']||Object.values(r)[3]||'').trim() !== 'Fundraiser');
+  const totalBudget = nonFundraiserEvts.reduce((s, r) => s + (parseFloat(r['Budgeted Cost ($)']||Object.values(r)[5])||0), 0);
+  const totalActual = nonFundraiserEvts.reduce((s, r) => s + (parseFloat(r['Actual Cost ($)']  ||Object.values(r)[6])||0), 0);
+  const totalRaised = txRows.filter(r => String(r['Type']||Object.values(r)[3]||'').trim() === 'Fundraiser')
+                            .reduce((s, r) => s + (parseFloat(r['Amount ($)']||Object.values(r)[5])||0), 0);
   const budgetPct   = totalBudget > 0 ? Math.min(100, Math.round(totalActual / totalBudget * 100)) : 0;
   const totalCharged = enriched.reduce((s, p) => s + p.charged, 0);
   const totalPaid    = enriched.reduce((s, p) => s + p.paid,    0);
@@ -1127,30 +1191,67 @@ function renderDashboard() {
       </div>
     </div>`;
 
-  // Events overview
-  const cats = ['Tournament','Practice','Fundraiser','Other'];
-  const catCounts = cats.map(c => evtRows.filter(r => String(r['Category']||Object.values(r)[3]||'').trim() === c).length);
-  const catColors = ['navy','','green',''];
+  // Events overview — per-event breakdown table
+  const getEvtCat    = e => String(e['Category']           || Object.values(e)[3] || '').trim();
+  const getEvtSplit  = e => String(e['Split Method']        || '').trim();
+  const getEvtActual = e => parseFloat(e['Actual Cost ($)'] || Object.values(e)[6]) || 0;
+  const getEvtBudget = e => parseFloat(e['Budgeted Cost ($)']|| Object.values(e)[5]) || 0;
+  const getEvtName   = e => String(e['Event Name']          || Object.values(e)[0] || '').trim();
+
+  const nTournament = evtRows.filter(e => getEvtCat(e) === 'Tournament').length;
+  const nPractice   = evtRows.filter(e => getEvtCat(e) === 'Practice').length;
+  const nFundraiser = evtRows.filter(e => getEvtCat(e) === 'Fundraiser').length;
+
+  const expEvtRows = evtRows.filter(e => getEvtCat(e) !== 'Fundraiser');
+  const expEvtTable = expEvtRows.map(e => {
+    const name     = getEvtName(e);
+    const actual   = getEvtActual(e);
+    const budget   = getEvtBudget(e);
+    const split    = getEvtSplit(e) || '—';
+    const variance = budget - actual;
+    return `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:5px 6px;font-weight:600">${esc(name)}</td>
+      <td style="padding:5px 6px;color:var(--muted);font-size:12px">${esc(split)}</td>
+      <td style="padding:5px 6px;text-align:right">${fmt$(budget)}</td>
+      <td style="padding:5px 6px;text-align:right;color:${actual > budget && budget > 0 ? 'var(--red)' : 'inherit'}">${fmt$(actual)}</td>
+      <td style="padding:5px 6px;text-align:right;font-weight:600;color:${variance >= 0 ? 'var(--green)' : 'var(--red)'}">
+        ${variance >= 0 ? '+' : '-'}${fmt$(Math.abs(variance))}</td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="5" style="padding:8px;color:var(--muted)">No expense events yet</td></tr>`;
+
   document.getElementById('dash-events').innerHTML = `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:1rem">
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:1rem">
       <div style="background:var(--bg);border-radius:8px;padding:.6rem .8rem">
         <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Total Events</div>
         <div style="font-size:20px;font-weight:700;color:var(--navy)">${evtRows.length}</div>
+        <div style="font-size:11px;color:var(--muted)">${nTournament}T · ${nPractice}P · ${nFundraiser}F</div>
       </div>
-      ${cats.map((c,i) => `
-        <div style="background:var(--bg);border-radius:8px;padding:.6rem .8rem">
-          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">${c}s</div>
-          <div style="font-size:20px;font-weight:700;color:var(--${catColors[i]||'text'})">${catCounts[i]}</div>
-        </div>`).join('')}
+      <div style="background:var(--bg);border-radius:8px;padding:.6rem .8rem">
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Actual Spend</div>
+        <div style="font-size:20px;font-weight:700;color:${totalActual > totalBudget && totalBudget > 0 ? 'var(--red)' : 'var(--navy)'}">
+          ${fmt$(totalActual)}</div>
+        <div style="font-size:11px;color:var(--muted)">of ${fmt$(totalBudget)} budgeted</div>
+      </div>
+      <div style="background:var(--bg);border-radius:8px;padding:.6rem .8rem">
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Fundraised</div>
+        <div style="font-size:20px;font-weight:700;color:var(--green)">${fmt$(totalRaised)}</div>
+        <div style="font-size:11px;color:var(--muted)">${nFundraiser} fundraiser${nFundraiser !== 1 ? 's' : ''}</div>
+      </div>
     </div>
-    <div style="font-size:13px;color:var(--muted)">
-      <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">
-        <span>Total budgeted</span><span style="font-weight:600">${fmt$(totalBudget)}</span>
-      </div>
-      <div style="display:flex;justify-content:space-between;padding:6px 0">
-        <span>Total actual spend</span><span style="font-weight:600">${fmt$(totalActual)}</span>
-      </div>
-    </div>`;
+    <div class="progress-wrap" style="margin-bottom:1rem">
+      <div class="progress-label"><span>Budget used</span><span>${budgetPct}%</span></div>
+      <div class="progress-track"><div class="progress-fill" style="width:${budgetPct}%;background:${budgetPct > 100 ? 'var(--red)' : 'var(--gold)'}"></div></div>
+    </div>
+    <table style="width:100%;font-size:13px;border-collapse:collapse">
+      <thead><tr style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em;border-bottom:2px solid var(--border)">
+        <th style="text-align:left;padding:4px 6px">Event</th>
+        <th style="text-align:left;padding:4px 6px">Split</th>
+        <th style="text-align:right;padding:4px 6px">Budget</th>
+        <th style="text-align:right;padding:4px 6px">Actual</th>
+        <th style="text-align:right;padding:4px 6px">Variance</th>
+      </tr></thead>
+      <tbody>${expEvtTable}</tbody>
+    </table>`;
 
   // "Needs attention" alert strip — players with outstanding balance
   const overdue = enriched.filter(p => p.net > 0.5).sort((a, b) => b.net - a.net);
