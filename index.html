@@ -329,7 +329,7 @@ const EXCEL_URL = 'finance_data.xlsx';
 
 // Access tiers: role values from Roster sheet that map to each tier
 const TIER_MAP = {
-  coach:    ['Coach','Treasurer','Manager'],
+  coach:    ['Coach','Treasurer','Support'],
   captain:  ['Captain'],
   player:   ['Player'],
 };
@@ -436,7 +436,7 @@ function tryLogin() {
     ).trim();
 
     // Known role and status values to scan for
-    const KNOWN_ROLES    = new Set(['Coach','Treasurer','Manager','Captain','Player']);
+    const KNOWN_ROLES    = new Set(['Coach','Treasurer','Support','Captain','Player']);
     const KNOWN_STATUSES = new Set(['Active','Inactive','Alumni']);
 
     function scanRow(row) {
@@ -579,7 +579,7 @@ function getBalanceRows() {
   });
 }
 
-const KNOWN_ROLES = ['Coach','Treasurer','Manager','Captain','Player'];
+const KNOWN_ROLES = ['Coach','Treasurer','Support','Captain','Player'];
 function getRoleFromRow(r) {
   if (!r) return '';
   const named = String(r['Role'] || r['Player Role'] || '').trim();
