@@ -330,9 +330,9 @@ const EXCEL_URL = 'finance_data.xlsx';
 
 // Access tiers: role values from Roster sheet that map to each tier
 const TIER_MAP = {
-  coach:    ['Coach','Treasurer','Support'],
+  coach:    ['Coach','Treasurer'],
   captain:  ['Captain'],
-  player:   ['Player'],
+  player:   ['Player','Support'],
 };
 
 // ── STATE ────────────────────────────────────────────────────────────
@@ -502,9 +502,9 @@ function signOut() {
 // ── NAV ────────────────────────────────────────────────────────────────
 const TABS = {
   player:    [['mybalance','🥏 My Balance']],
-  captain:   [['standing','🏅 Team Standing'],['attendance','✅ Attendance']],
-  coach:     [['standing','🏅 Team Standing'],['attendance','✅ Attendance'],['fundraisers','🎪 Fundraisers']],
-  treasurer: [['dashboard','📊 Dashboard'],['standing','🏅 Team Standing'],['roster','👥 Roster'],['events','📋 Events'],['attendance','✅ Attendance'],['transactions','💳 Transactions'],['fundraisers','🎪 Fundraisers']],
+  captain:   [['mybalance','🥏 My Balance'],['standing','🏅 Team Standing'],['attendance','✅ Attendance']],
+  coach:     [['mybalance','🥏 My Balance'],['standing','🏅 Team Standing'],['attendance','✅ Attendance'],['fundraisers','🎪 Fundraisers']],
+  treasurer: [['mybalance','🥏 My Balance'],['dashboard','📊 Dashboard'],['standing','🏅 Team Standing'],['roster','👥 Roster'],['events','📋 Events'],['attendance','✅ Attendance'],['transactions','💳 Transactions'],['fundraisers','🎪 Fundraisers']],
 };
 
 let currentSection = null;
