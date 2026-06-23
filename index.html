@@ -139,6 +139,38 @@ tr:hover td { background: #f8fafc; }
 .progress-track { height: 8px; background: #e2e8f0; border-radius: 4px; overflow: hidden; }
 .progress-fill { height: 100%; border-radius: 4px; transition: width .5s ease; }
 
+/* ── VENMO MODAL ── */
+.modal-overlay {
+  display: none; position: fixed; inset: 0; background: rgba(0,0,0,.55);
+  z-index: 300; align-items: center; justify-content: center;
+}
+.modal-overlay.open { display: flex; }
+.modal-box {
+  background: var(--card); border-radius: 20px; padding: 2rem;
+  width: 340px; max-width: 92vw; text-align: center;
+  box-shadow: 0 24px 64px rgba(0,0,0,.3); position: relative;
+}
+.modal-close {
+  position: absolute; top: 14px; right: 16px; background: none; border: none;
+  font-size: 22px; color: var(--muted); cursor: pointer; line-height: 1;
+}
+.modal-close:hover { color: var(--text); }
+.modal-box h3 { font-size: 18px; font-weight: 700; color: var(--navy); margin-bottom: .25rem; }
+.modal-box p  { font-size: 13px; color: var(--muted); margin-bottom: 1.25rem; }
+.venmo-btn {
+  display: inline-block; background: #008CFF; color: #fff; font-weight: 700;
+  font-size: 15px; padding: 12px 28px; border-radius: 12px; text-decoration: none;
+  margin-bottom: 1.25rem; transition: opacity .2s;
+}
+.venmo-btn:hover { opacity: .88; }
+.modal-qr { width: 100%; max-width: 220px; height: auto; border-radius: 10px; border: 1px solid var(--border); }
+.pay-dues-btn {
+  margin-top: 1rem; padding: 10px 28px; background: #008CFF; color: #fff;
+  border: none; border-radius: 10px; font-size: 14px; font-weight: 700;
+  cursor: pointer; transition: opacity .2s;
+}
+.pay-dues-btn:hover { opacity: .88; }
+
 /* ── LOADING ── */
 #loading { display: none; position: fixed; inset: 0; background: rgba(26,58,92,.7); z-index: 200; align-items: center; justify-content: center; flex-direction: column; gap: 16px; color: #fff; font-size: 15px; }
 .spinner { width: 40px; height: 40px; border: 3px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin .8s linear infinite; }
@@ -198,6 +230,18 @@ tr:hover td { background: #f8fafc; }
   </header>
 
   <nav id="main-nav"></nav>
+
+  <!-- VENMO MODAL -->
+  <div class="modal-overlay" id="venmo-modal" onclick="if(event.target===this)closeVenmoModal()">
+    <div class="modal-box">
+      <button class="modal-close" onclick="closeVenmoModal()">&#215;</button>
+      <h3>💸 Pay Dues</h3>
+      <p>Tap the button or scan the QR code to pay via Venmo.</p>
+      <a class="venmo-btn" href="https://venmo.com/code?user_id=2328466355650560103&created=1782255254" target="_blank" rel="noopener">Pay on Venmo</a>
+      <br>
+      <img class="modal-qr" src="venmo_stuff/venmo_qrcode.png" alt="Venmo QR code">
+    </div>
+  </div>
 
   <main>
     <!-- PLAYER VIEW -->
@@ -495,6 +539,9 @@ function tryLogin() {
   }
 }
 
+function openVenmoModal()  { document.getElementById('venmo-modal').classList.add('open'); }
+function closeVenmoModal() { document.getElementById('venmo-modal').classList.remove('open'); }
+
 function signOut() {
   USER = null;
   document.getElementById('app').style.display = 'none';
@@ -774,6 +821,7 @@ function renderMyBalance() {
       <div class="label">${esc(heroLabel)}</div>
       <div class="amount">${fmt$(Math.abs(net))}</div>
       <div class="label">Status: ${esc(standing || '—')}</div>
+      <button class="pay-dues-btn" onclick="openVenmoModal()">💸 Pay Dues</button>
     </div>`;
 
   document.getElementById('player-stats').innerHTML = `
