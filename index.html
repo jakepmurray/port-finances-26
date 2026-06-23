@@ -822,19 +822,18 @@ function renderMyBalance() {
       <td style="font-weight:700;color:var(--navy)">${myEvtCost > 0 ? fmt$(myEvtCost) : '—'}</td>
     </tr>`;
 
-    // Transaction line-item sub-rows
+    // Transaction line-item sub-rows (only ones the player attended)
     txList.forEach(tx => {
-      const desc    = String(tx['Description'] || Object.values(tx)[1] || '').trim();
-      const attVal  = myAttRow ? String(myAttRow[desc] || '').trim() : '';
-      const dispVal = attVal === '1' ? 'Y' : attVal || '—';
-      const cpp     = txCpp[desc] || 0;
-      const owes    = (split === 'Equal Split' || attVal === '1') && cpp > 0;
+      const desc   = String(tx['Description'] || Object.values(tx)[1] || '').trim();
+      const attVal = myAttRow ? String(myAttRow[desc] || '').trim() : '';
+      if (split === 'Attendance' && attVal !== '1') return;
+      const cpp  = txCpp[desc] || 0;
       evtBodyHtml += `<tr style="background:#f0f7ff">
         <td style="padding:3px 6px 3px 24px;font-size:12px;color:var(--muted)">&#8627; ${esc(desc)}</td>
         <td></td>
         <td style="font-size:11px;color:var(--muted)">${esc(split) || '—'}</td>
-        <td style="text-align:center">${statusBadge(dispVal)}</td>
-        <td style="font-size:12px;font-weight:600">${owes ? fmt$(cpp) : '—'}</td>
+        <td style="text-align:center">${statusBadge('Y')}</td>
+        <td style="font-size:12px;font-weight:600">${cpp > 0 ? fmt$(cpp) : '—'}</td>
       </tr>`;
     });
 
