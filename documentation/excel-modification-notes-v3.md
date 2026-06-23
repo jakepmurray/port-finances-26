@@ -42,3 +42,10 @@ Can you make that change and any appropriate changes to the html based on that u
 This is awesome!
 
 One more changes for now. Coaches, captains, and treasurer should get the same dues view as players as their default view in addition to the other tabs they have access to. Support should only have the player view.
+
+
+-------------------
+
+# Iter 5
+
+Another simple change. If a full attendance column is blank, leave it out of the attendance view on html for coaches, captains, treasurer

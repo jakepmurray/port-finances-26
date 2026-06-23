@@ -1002,8 +1002,13 @@ function renderAttendance() {
 
   const isAttended = v => { const s = String(v||'').trim(); return s === '1' || s.toUpperCase() === 'Y'; };
 
+  // Hide columns where every player row is blank (unused transaction slots)
+  const visibleCols = attCols.filter((col, i) =>
+    col && playerRows.some(r => String(positional ? Object.values(r)[i + 1] : r[col] || '').trim() !== '')
+  );
+
   let headHtml = '<tr><th>Player</th>';
-  attCols.forEach(col => {
+  visibleCols.forEach(col => {
     const linked = txDescMap[col] || '';
     const short  = col.length > 14 ? col.substring(0, 14) + '…' : col;
     headHtml += `<th title="${esc(col)}${linked ? ' (' + esc(linked) + ')' : ''}">${esc(short)}${linked ? `<div style="font-size:9px;color:var(--muted);font-weight:400">${esc(linked)}</div>` : ''}</th>`;
@@ -1015,12 +1020,12 @@ function renderAttendance() {
     const name = String(r['Player Name'] || r['Full Name'] || Object.values(r)[0] || '').trim();
     const vals = Object.values(r);
 
-    const marks = attCols.map((col, i) =>
-      positional ? vals[i + 1] : r[col]
+    const marks = visibleCols.map((col, i) =>
+      positional ? vals[attCols.indexOf(col) + 1] : r[col]
     );
 
     const attended = marks.filter(isAttended).length;
-    const total    = attCols.length;
+    const total    = visibleCols.length;
     const rate     = total > 0 ? Math.round(attended / total * 100) : 0;
 
     bodyHtml += `<tr><td><strong>${esc(name)}</strong></td>`;
