@@ -33,3 +33,12 @@ The html site is looking great!
 For the xlsx attendance, It seems like what you're doing is close to what I want but not quite there. Instead of "Attendance cols 52–81 now pull from Transactions rows 7–36 instead of the Line Items sheet", I want the old attendance sheet to be completely replaced by this new logic instead of the new logic being tacked on at the end. 
 
 Can you make that change and any appropriate changes to the html based on that update?
+
+
+--------------------
+
+# Iter 4
+
+This is awesome!
+
+One more changes for now. Coaches, captains, and treasurer should get the same dues view as players as their default view in addition to the other tabs they have access to. Support should only have the player view.
