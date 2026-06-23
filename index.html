@@ -750,7 +750,7 @@ function renderMyBalance() {
 
   const heroClass = Math.abs(net) < 0.5 ? 'clear' : net > 0 ? 'owed' : 'credit';
   const heroLabel = Math.abs(net) < 0.5 ? 'You\'re all settled up! 🎉'
-    : net > 0 ? 'You owe the team'
+    : net > 0 ? 'You owe the team (venmo @jacob-murray-23)'
     : 'The team owes you';
 
   document.getElementById('balance-hero-wrap').innerHTML = `
