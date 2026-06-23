@@ -24,3 +24,12 @@ This wasn't your best effort. Let's go over everything.
 
 Let's give it another go!
 
+-------------------
+
+# Iter 3
+
+The html site is looking great!
+
+For the xlsx attendance, It seems like what you're doing is close to what I want but not quite there. Instead of "Attendance cols 52–81 now pull from Transactions rows 7–36 instead of the Line Items sheet", I want the old attendance sheet to be completely replaced by this new logic instead of the new logic being tacked on at the end. 
+
+Can you make that change and any appropriate changes to the html based on that update?

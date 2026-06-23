@@ -965,7 +965,6 @@ function renderEvents() {
 // ── ATTENDANCE ─────────────────────────────────────────────────────────
 function renderAttendance() {
   const attSheet = DATA['Attendance'] || [];
-  const evtRows  = getEventsRows();
 
   if (!attSheet.length) {
     document.getElementById('att-head').innerHTML = '<tr><th>No attendance data</th></tr>';
@@ -973,43 +972,55 @@ function renderAttendance() {
     return;
   }
 
-  // Rows 4-6 (Cost per Person, Total Attendees, Total Cost) sit between the header and player data
   const ATT_SKIP = new Set(['Cost per Person ($) [auto]', 'Total Attendees', 'Total Cost ($)']);
   const playerRows = attSheet.filter(r => {
     const name = String(r['Player Name'] || r['Full Name'] || Object.values(r)[0] || '').trim();
     return name && !ATT_SKIP.has(name);
   });
 
-  // Build event column keys. If the Attendance header formulas have cached event names use them;
-  // otherwise fall back to event names from the Events sheet (positional columns B, C, …).
+  // Build description → linked event map from Transactions (for column sub-labels)
+  const txDescMap = {};
+  getTxRows().forEach(tx => {
+    const desc   = String(tx['Description']  || Object.values(tx)[1] || '').trim();
+    const linked = String(tx['Linked Event'] || Object.values(tx)[6] || '').trim();
+    const type   = String(tx['Type']         || Object.values(tx)[3] || '').trim();
+    if (desc && linked && type === 'Expense') txDescMap[desc] = linked;
+  });
+
+  // Column keys come from Attendance row 3 (cached transaction Descriptions after Excel recalc).
+  // Fallback: pull descriptions directly from Transactions sheet.
   const namedKeys = Object.keys(attSheet[0] || {}).filter(k =>
     !['Player Name','Full Name','Access Code'].includes(k) && !k.startsWith('__')
-  ).slice(0, 20);
-  const evtNames = evtRows.map(r => String(r['Event Name'] || Object.values(r)[0] || '').trim()).filter(Boolean).slice(0, 20);
-  const evtCols    = namedKeys.length > 0 ? namedKeys : evtNames;
-  const positional = namedKeys.length === 0; // no cached header values — read by column index
+  ).slice(0, 80);
+  const txFallback = getTxRows()
+    .filter(tx => String(tx['Type'] || Object.values(tx)[3] || '').trim() === 'Expense'
+      && String(tx['Linked Event'] || Object.values(tx)[6] || '').trim())
+    .map(tx => String(tx['Description'] || Object.values(tx)[1] || '').trim())
+    .filter(Boolean).slice(0, 80);
+  const attCols   = namedKeys.length > 0 ? namedKeys : txFallback;
+  const positional = namedKeys.length === 0;
 
   const isAttended = v => { const s = String(v||'').trim(); return s === '1' || s.toUpperCase() === 'Y'; };
 
   let headHtml = '<tr><th>Player</th>';
-  evtCols.forEach((col, i) => {
-    const label = evtNames[i] || col;
-    const short  = label.length > 14 ? label.substring(0, 14) + '…' : label;
-    headHtml += `<th title="${esc(label)}">${esc(short)}</th>`;
+  attCols.forEach(col => {
+    const linked = txDescMap[col] || '';
+    const short  = col.length > 14 ? col.substring(0, 14) + '…' : col;
+    headHtml += `<th title="${esc(col)}${linked ? ' (' + esc(linked) + ')' : ''}">${esc(short)}${linked ? `<div style="font-size:9px;color:var(--muted);font-weight:400">${esc(linked)}</div>` : ''}</th>`;
   });
-  headHtml += '<th>Attended</th><th>Rate</th></tr>';
+  headHtml += '<th>Count</th><th>Rate</th></tr>';
 
   let bodyHtml = '';
   playerRows.forEach(r => {
     const name = String(r['Player Name'] || r['Full Name'] || Object.values(r)[0] || '').trim();
-    const vals = Object.values(r); // positional fallback: [0]=name, [1]=evt1, [2]=evt2, …
+    const vals = Object.values(r);
 
-    const marks = evtCols.map((col, i) =>
+    const marks = attCols.map((col, i) =>
       positional ? vals[i + 1] : r[col]
     );
 
     const attended = marks.filter(isAttended).length;
-    const total    = evtCols.length;
+    const total    = attCols.length;
     const rate     = total > 0 ? Math.round(attended / total * 100) : 0;
 
     bodyHtml += `<tr><td><strong>${esc(name)}</strong></td>`;
@@ -1022,7 +1033,7 @@ function renderAttendance() {
     bodyHtml += '</tr>';
   });
 
-  if (!bodyHtml) bodyHtml = '<tr class="empty-row"><td colspan="20">No attendance data</td></tr>';
+  if (!bodyHtml) bodyHtml = '<tr class="empty-row"><td colspan="80">No attendance data</td></tr>';
   document.getElementById('att-head').innerHTML = headHtml;
   document.getElementById('att-tbody').innerHTML = bodyHtml;
 }
