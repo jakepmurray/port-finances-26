@@ -637,14 +637,31 @@ function getActiveGroups() {
   return active.length ? active : null;
 }
 
-// Filters event rows to only those in active season groups.
-// Events with no group assigned are always shown.
+// Filters event rows by season group visibility.
+// Events with no Season Group are always shown.
+// Events tagged with a group set to "No" in Settings are hidden.
+// Treasurer _groupOverride (if set) uses a whitelist instead.
 function filterByGroup(evtRows) {
-  const groups = getActiveGroups();
-  if (!groups) return evtRows;
+  const settings = getSettingsRows();
+  if (!settings.length) return evtRows;
+
+  if (_groupOverride !== null) {
+    const activeSet = new Set(_groupOverride);
+    return evtRows.filter(e => {
+      const g = String(e['Season Group'] || '').trim();
+      return !g || activeSet.has(g);
+    });
+  }
+
+  const hiddenGroups = new Set(
+    settings
+      .filter(r => String(r['Show in Player View?'] || Object.values(r)[1] || '').trim() === 'No')
+      .map(r => String(r['Season Group'] || Object.values(r)[0] || '').trim())
+      .filter(Boolean)
+  );
   return evtRows.filter(e => {
     const g = String(e['Season Group'] || '').trim();
-    return !g || groups.includes(g);
+    return !hiddenGroups.has(g);
   });
 }
 
@@ -654,82 +671,64 @@ function filterByGroup(evtRows) {
 function buildChargedMap() {
   const evtRows = getEventsRows();
   const attRows = getAttendanceRows();
-  const liRows  = getLineItemRows();
+  const txRows  = getTxRows();
   const { roleMap, statusMap } = buildAcMaps();
   const activePlayers = Object.keys(roleMap).filter(n =>
     TIER_MAP.player.includes(roleMap[n]) && statusMap[n] === 'Active'
   );
   const activeCount = activePlayers.length;
 
-  // Cost per person for each event
-  const evtCpp = {};
+  // Build event → split method lookup
+  const evtLookup = {};
   evtRows.forEach(e => {
-    const eName = String(e['Event Name']  || Object.values(e)[0] || '').trim();
+    const name  = String(e['Event Name']  || Object.values(e)[0] || '').trim();
     const split = String(e['Split Method']|| '').trim();
-    const cost  = parseFloat(e['Actual Cost ($)'] || Object.values(e)[6]) || 0;
-    const cat   = String(e['Category']   || Object.values(e)[3] || '').trim();
-    if (!eName || cat === 'Fundraiser' || cost === 0) { evtCpp[eName] = 0; return; }
+    if (name) evtLookup[name] = split;
+  });
+
+  // Expense transactions with a Linked Event are the line items
+  const expenseTx = txRows.filter(tx => {
+    const type   = String(tx['Type']         || Object.values(tx)[3] || '').trim();
+    const linked = String(tx['Linked Event'] || Object.values(tx)[6] || '').trim();
+    const amt    = parseFloat(tx['Amount ($)'] || Object.values(tx)[5]) || 0;
+    return type === 'Expense' && linked && amt > 0;
+  });
+
+  // Cost per person for each transaction
+  const txCpp = {};
+  expenseTx.forEach(tx => {
+    const desc   = String(tx['Description'] || Object.values(tx)[1] || '').trim();
+    const linked = String(tx['Linked Event']|| Object.values(tx)[6] || '').trim();
+    const amt    = parseFloat(tx['Amount ($)'] || Object.values(tx)[5]) || 0;
+    const split  = evtLookup[linked] || '';
+    if (!desc) return;
     if (split === 'Equal Split') {
-      evtCpp[eName] = activeCount > 0 ? cost / activeCount : 0;
+      txCpp[desc] = activeCount > 0 ? amt / activeCount : 0;
     } else if (split === 'Attendance') {
-      const cnt = attRows.filter(r => Number(r[eName]) === 1).length;
-      evtCpp[eName] = cnt > 0 ? cost / cnt : 0;
-    } else {
-      evtCpp[eName] = 0;
+      const cnt = attRows.filter(r => Number(r[desc]) === 1).length;
+      txCpp[desc] = cnt > 0 ? amt / cnt : 0;
     }
   });
 
-  // Cost per person for each line item
-  const liCpp = {};
-  liRows.forEach(li => {
-    const liName = String(li['Line Item Name'] || Object.values(li)[0] || '').trim();
-    const split  = String(li['Split Method']   || Object.values(li)[2] || '').trim();
-    const cost   = parseFloat(li['Actual Cost ($)'] || Object.values(li)[4]) || 0;
-    if (!liName || cost === 0) { liCpp[liName] = 0; return; }
-    if (split === 'Equal Split') {
-      liCpp[liName] = activeCount > 0 ? cost / activeCount : 0;
-    } else if (split === 'Attendance') {
-      const cnt = attRows.filter(r => Number(r[liName]) === 1).length;
-      liCpp[liName] = cnt > 0 ? cost / cnt : 0;
-    } else {
-      liCpp[liName] = 0;
-    }
-  });
-
-  // Accumulate total charged per player (events)
+  // Accumulate per player
   const chargedMap = {};
-  evtRows.forEach(e => {
-    const eName = String(e['Event Name']  || Object.values(e)[0] || '').trim();
-    const split = String(e['Split Method']|| '').trim();
-    const cpp   = evtCpp[eName] || 0;
+  expenseTx.forEach(tx => {
+    const desc   = String(tx['Description'] || Object.values(tx)[1] || '').trim();
+    const linked = String(tx['Linked Event']|| Object.values(tx)[6] || '').trim();
+    const split  = evtLookup[linked] || '';
+    const cpp    = txCpp[desc] || 0;
     if (!cpp) return;
     if (split === 'Equal Split') {
       activePlayers.forEach(p => { chargedMap[p] = (chargedMap[p] || 0) + cpp; });
     } else if (split === 'Attendance') {
       attRows.forEach(r => {
         const p = String(r['Player Name'] || Object.values(r)[0] || '').trim();
-        if (p && Number(r[eName]) === 1) chargedMap[p] = (chargedMap[p] || 0) + cpp;
+        if (p && Number(r[desc]) === 1) chargedMap[p] = (chargedMap[p] || 0) + cpp;
       });
     }
   });
 
-  // Accumulate total charged per player (line items)
-  liRows.forEach(li => {
-    const liName = String(li['Line Item Name'] || Object.values(li)[0] || '').trim();
-    const split  = String(li['Split Method']   || Object.values(li)[2] || '').trim();
-    const cpp    = liCpp[liName] || 0;
-    if (!cpp) return;
-    if (split === 'Equal Split') {
-      activePlayers.forEach(p => { chargedMap[p] = (chargedMap[p] || 0) + cpp; });
-    } else if (split === 'Attendance') {
-      attRows.forEach(r => {
-        const p = String(r['Player Name'] || Object.values(r)[0] || '').trim();
-        if (p && Number(r[liName]) === 1) chargedMap[p] = (chargedMap[p] || 0) + cpp;
-      });
-    }
-  });
-
-  return { chargedMap, evtCpp, liCpp };
+  return { chargedMap, txCpp, evtLookup, expenseTx };
 }
 
 // ── MY BALANCE (player view) ───────────────────────────────────────────
@@ -739,7 +738,7 @@ function renderMyBalance() {
     String(r['Player Name'] || Object.values(r)[0] || '').trim() === USER.name
   );
 
-  const { chargedMap, evtCpp, liCpp } = buildChargedMap();
+  const { chargedMap, txCpp, evtLookup, expenseTx } = buildChargedMap();
   let net = 0, charged = 0, totalPaid = 0, paidUpfront = 0, standing = '';
   if (myBal) {
     charged     = chargedMap[USER.name] || 0;
@@ -782,45 +781,64 @@ function renderMyBalance() {
     String(r['Player Name'] || Object.values(r)[0] || '').trim() === USER.name
   );
   const evtRows = getEventsRows();
-  const liRows  = getLineItemRows();
   const filteredEvtRows = filterByGroup(evtRows);
+
+  // Group expense transactions by linked event
+  const txByEvt = {};
+  expenseTx.forEach(tx => {
+    const linked = String(tx['Linked Event'] || Object.values(tx)[6] || '').trim();
+    if (!txByEvt[linked]) txByEvt[linked] = [];
+    txByEvt[linked].push(tx);
+  });
 
   let evtBodyHtml = '';
   filteredEvtRows.forEach(evt => {
-    const evtName  = String(evt['Event Name']  || Object.values(evt)[0] || '').trim();
-    const evtDate  = fmtDate(evt['Start Date'] || Object.values(evt)[1]);
-    const evtCat   = String(evt['Category']    || Object.values(evt)[3] || '').trim();
-    const split    = String(evt['Split Method']|| '').trim();
-    const attVal   = myAttRow ? String(myAttRow[evtName] || '').trim() : '';
-    const dispVal  = attVal === '1' ? 'Y' : attVal || '—';
-    const cpp      = evtCpp[evtName] || 0;
-    const owes     = (split === 'Equal Split' || attVal === '1') && cpp > 0;
-    const costShare = owes ? fmt$(cpp) : '—';
-    evtBodyHtml += `<tr>
-      <td>${esc(evtName)}</td><td>${esc(evtDate)}</td>
+    const evtName = String(evt['Event Name']  || Object.values(evt)[0] || '').trim();
+    const evtDate = fmtDate(evt['Start Date'] || Object.values(evt)[1]);
+    const evtCat  = String(evt['Category']    || Object.values(evt)[3] || '').trim();
+    const split   = evtLookup[evtName] || '';
+    const txList  = txByEvt[evtName] || [];
+
+    // My total cost for this event = sum of applicable transaction cpp values
+    const myEvtCost = txList.reduce((s, tx) => {
+      const desc   = String(tx['Description'] || Object.values(tx)[1] || '').trim();
+      const attVal = myAttRow ? String(myAttRow[desc] || '').trim() : '';
+      const cpp    = txCpp[desc] || 0;
+      return s + ((split === 'Equal Split' || attVal === '1') && cpp > 0 ? cpp : 0);
+    }, 0);
+
+    // Event header row
+    evtBodyHtml += `<tr style="background:var(--navy-light)">
+      <td style="font-weight:700;color:var(--navy)">${esc(evtName)}</td>
+      <td style="color:var(--muted);font-size:12px">${esc(evtDate)}</td>
       <td><span class="badge badge-navy">${esc(evtCat)}</span></td>
-      <td>${statusBadge(dispVal)}</td>
-      <td>${costShare}</td></tr>`;
-    // Line item sub-rows linked to this event
-    liRows.filter(li =>
-      String(li['Parent Event'] || Object.values(li)[1] || '').trim() === evtName
-    ).forEach(li => {
-      const liName  = String(li['Line Item Name'] || Object.values(li)[0] || '').trim();
-      const liSplit = String(li['Split Method']   || Object.values(li)[2] || '').trim();
-      const liAtt   = myAttRow ? String(myAttRow[liName] || '').trim() : '';
-      const liDisp  = liAtt === '1' ? 'Y' : liAtt || '—';
-      const liCppV  = liCpp[liName] || 0;
-      const liOwes  = (liSplit === 'Equal Split' || liAtt === '1') && liCppV > 0;
-      evtBodyHtml += `<tr style="background:#f0fdfa">
-        <td style="padding:3px 6px 3px 24px;font-size:11px;color:var(--muted)">↳ ${esc(liName)}</td>
+      <td></td>
+      <td style="font-weight:700;color:var(--navy)">${myEvtCost > 0 ? fmt$(myEvtCost) : '—'}</td>
+    </tr>`;
+
+    // Transaction line-item sub-rows
+    txList.forEach(tx => {
+      const desc    = String(tx['Description'] || Object.values(tx)[1] || '').trim();
+      const attVal  = myAttRow ? String(myAttRow[desc] || '').trim() : '';
+      const dispVal = attVal === '1' ? 'Y' : attVal || '—';
+      const cpp     = txCpp[desc] || 0;
+      const owes    = (split === 'Equal Split' || attVal === '1') && cpp > 0;
+      evtBodyHtml += `<tr style="background:#f0f7ff">
+        <td style="padding:3px 6px 3px 24px;font-size:12px;color:var(--muted)">&#8627; ${esc(desc)}</td>
         <td></td>
-        <td style="font-size:11px;color:var(--muted)">${esc(liSplit) || '—'}</td>
-        <td style="text-align:center">${statusBadge(liDisp)}</td>
-        <td style="font-size:12px;font-weight:600">${liOwes ? fmt$(liCppV) : '—'}</td>
+        <td style="font-size:11px;color:var(--muted)">${esc(split) || '—'}</td>
+        <td style="text-align:center">${statusBadge(dispVal)}</td>
+        <td style="font-size:12px;font-weight:600">${owes ? fmt$(cpp) : '—'}</td>
       </tr>`;
     });
+
+    if (txList.length === 0) {
+      evtBodyHtml += `<tr style="background:#f8fafc">
+        <td colspan="5" style="padding:4px 6px 4px 24px;font-size:11px;color:var(--muted)">No expense transactions linked to this event yet</td>
+      </tr>`;
+    }
   });
-  if (!evtBodyHtml) evtBodyHtml = '<tr class="empty-row"><td colspan="5">No event history yet</td></tr>';
+  if (!evtBodyHtml) evtBodyHtml = '<tr class="empty-row"><td colspan="5">No events to show — tag events with a Season Group in the spreadsheet</td></tr>';
 
   document.getElementById('player-events-tbody').innerHTML = evtBodyHtml;
 

@@ -12,4 +12,15 @@ We are getting very close here. Now I have a few more changes.
 
 # Iter 2
 
-This is a great start. 
+This wasn't your best effort. Let's go over everything.
+
+- I think i messed up with the line items sheet. I think "transactions" is exactly what i wanted line items to be
+
+- Attendance should read off of the line items instead of events (transactions unless you can think of a reason not to do this) but still include what the parent event is. the "description" is the line item name 
+
+- All events are still showing up on the html, not just in-season
+
+- The html now says that eveyone is settled up even though they aren't. 
+
+Let's give it another go!
+
