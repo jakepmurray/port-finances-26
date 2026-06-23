@@ -296,6 +296,7 @@ tr:hover td { background: #f8fafc; }
     <!-- DASHBOARD (Treasurer only) -->
     <div id="section-dashboard" class="section">
       <div class="stat-grid cols-4" id="dash-stats"></div>
+      <div id="dash-group-filter" style="margin-bottom:1.25rem"></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.25rem;margin-bottom:1.25rem">
         <div class="card">
           <div class="card-title">💰 Financial Overview</div>
@@ -337,6 +338,7 @@ const TIER_MAP = {
 // ── STATE ────────────────────────────────────────────────────────────
 let DATA = {};       // parsed sheets
 let USER = null;     // { name, code, role, tier, rowData }
+let _groupOverride = null; // null = use Settings; array = treasurer session override
 
 // ── UTILS ────────────────────────────────────────────────────────────
 const fmt$ = v => {
@@ -389,6 +391,7 @@ async function loadData() {
     const SHEET_RANGES = {
       'Roster': 3, 'Player Balances': 5, 'Access Codes': 4,
       'Events': 3, 'Attendance': 2, 'Transactions': 5,
+      'Line Items': 3, 'Settings': 3,
     };
 
     DATA = {};
@@ -585,6 +588,18 @@ function getAttendanceRows() {
       && isNaN(Number(name));
   });
 }
+function getLineItemRows() {
+  return (DATA['Line Items'] || []).filter(r => {
+    const name = String(r['Line Item Name'] || Object.values(r)[0] || '').trim();
+    return name && !['Line Item Name','LINE ITEMS'].includes(name);
+  });
+}
+function getSettingsRows() {
+  return (DATA['Settings'] || []).filter(r => {
+    const g = String(r['Season Group'] || Object.values(r)[0] || '').trim();
+    return g && !['Season Group','SETTINGS','VIEW SETTINGS (TREASURER ONLY)'].includes(g);
+  });
+}
 
 const KNOWN_ROLES = ['Coach','Treasurer','Support','Captain','Player'];
 function getRoleFromRow(r) {
@@ -609,12 +624,37 @@ function buildAcMaps() {
   return { roleMap, statusMap };
 }
 
+// Returns which season groups are currently active for the player balance view.
+// Treasurer can override via _groupOverride; otherwise reads from Settings sheet.
+function getActiveGroups() {
+  if (_groupOverride !== null) return _groupOverride;
+  const settings = getSettingsRows();
+  if (!settings.length) return null; // no settings = show all
+  const active = settings
+    .filter(r => String(r['Show in Player View?'] || Object.values(r)[1] || '').trim() === 'Yes')
+    .map(r => String(r['Season Group'] || Object.values(r)[0] || '').trim())
+    .filter(Boolean);
+  return active.length ? active : null;
+}
+
+// Filters event rows to only those in active season groups.
+// Events with no group assigned are always shown.
+function filterByGroup(evtRows) {
+  const groups = getActiveGroups();
+  if (!groups) return evtRows;
+  return evtRows.filter(e => {
+    const g = String(e['Season Group'] || '').trim();
+    return !g || groups.includes(g);
+  });
+}
+
 // Computes Total Charged per player from raw Events + Attendance data.
 // This avoids relying on xlsx cached formula values (openpyxl writes formulas
 // without cached values, so XLSX.js would read 0 until Excel recalculates).
 function buildChargedMap() {
   const evtRows = getEventsRows();
   const attRows = getAttendanceRows();
+  const liRows  = getLineItemRows();
   const { roleMap, statusMap } = buildAcMaps();
   const activePlayers = Object.keys(roleMap).filter(n =>
     TIER_MAP.player.includes(roleMap[n]) && statusMap[n] === 'Active'
@@ -639,7 +679,24 @@ function buildChargedMap() {
     }
   });
 
-  // Accumulate total charged per player
+  // Cost per person for each line item
+  const liCpp = {};
+  liRows.forEach(li => {
+    const liName = String(li['Line Item Name'] || Object.values(li)[0] || '').trim();
+    const split  = String(li['Split Method']   || Object.values(li)[2] || '').trim();
+    const cost   = parseFloat(li['Actual Cost ($)'] || Object.values(li)[4]) || 0;
+    if (!liName || cost === 0) { liCpp[liName] = 0; return; }
+    if (split === 'Equal Split') {
+      liCpp[liName] = activeCount > 0 ? cost / activeCount : 0;
+    } else if (split === 'Attendance') {
+      const cnt = attRows.filter(r => Number(r[liName]) === 1).length;
+      liCpp[liName] = cnt > 0 ? cost / cnt : 0;
+    } else {
+      liCpp[liName] = 0;
+    }
+  });
+
+  // Accumulate total charged per player (events)
   const chargedMap = {};
   evtRows.forEach(e => {
     const eName = String(e['Event Name']  || Object.values(e)[0] || '').trim();
@@ -655,7 +712,24 @@ function buildChargedMap() {
       });
     }
   });
-  return { chargedMap, evtCpp };
+
+  // Accumulate total charged per player (line items)
+  liRows.forEach(li => {
+    const liName = String(li['Line Item Name'] || Object.values(li)[0] || '').trim();
+    const split  = String(li['Split Method']   || Object.values(li)[2] || '').trim();
+    const cpp    = liCpp[liName] || 0;
+    if (!cpp) return;
+    if (split === 'Equal Split') {
+      activePlayers.forEach(p => { chargedMap[p] = (chargedMap[p] || 0) + cpp; });
+    } else if (split === 'Attendance') {
+      attRows.forEach(r => {
+        const p = String(r['Player Name'] || Object.values(r)[0] || '').trim();
+        if (p && Number(r[liName]) === 1) chargedMap[p] = (chargedMap[p] || 0) + cpp;
+      });
+    }
+  });
+
+  return { chargedMap, evtCpp, liCpp };
 }
 
 // ── MY BALANCE (player view) ───────────────────────────────────────────
@@ -665,7 +739,7 @@ function renderMyBalance() {
     String(r['Player Name'] || Object.values(r)[0] || '').trim() === USER.name
   );
 
-  const { chargedMap, evtCpp } = buildChargedMap();
+  const { chargedMap, evtCpp, liCpp } = buildChargedMap();
   let net = 0, charged = 0, totalPaid = 0, paidUpfront = 0, standing = '';
   if (myBal) {
     charged     = chargedMap[USER.name] || 0;
@@ -708,9 +782,11 @@ function renderMyBalance() {
     String(r['Player Name'] || Object.values(r)[0] || '').trim() === USER.name
   );
   const evtRows = getEventsRows();
+  const liRows  = getLineItemRows();
+  const filteredEvtRows = filterByGroup(evtRows);
 
   let evtBodyHtml = '';
-  evtRows.slice(0, 30).forEach(evt => {
+  filteredEvtRows.forEach(evt => {
     const evtName  = String(evt['Event Name']  || Object.values(evt)[0] || '').trim();
     const evtDate  = fmtDate(evt['Start Date'] || Object.values(evt)[1]);
     const evtCat   = String(evt['Category']    || Object.values(evt)[3] || '').trim();
@@ -725,6 +801,24 @@ function renderMyBalance() {
       <td><span class="badge badge-navy">${esc(evtCat)}</span></td>
       <td>${statusBadge(dispVal)}</td>
       <td>${costShare}</td></tr>`;
+    // Line item sub-rows linked to this event
+    liRows.filter(li =>
+      String(li['Parent Event'] || Object.values(li)[1] || '').trim() === evtName
+    ).forEach(li => {
+      const liName  = String(li['Line Item Name'] || Object.values(li)[0] || '').trim();
+      const liSplit = String(li['Split Method']   || Object.values(li)[2] || '').trim();
+      const liAtt   = myAttRow ? String(myAttRow[liName] || '').trim() : '';
+      const liDisp  = liAtt === '1' ? 'Y' : liAtt || '—';
+      const liCppV  = liCpp[liName] || 0;
+      const liOwes  = (liSplit === 'Equal Split' || liAtt === '1') && liCppV > 0;
+      evtBodyHtml += `<tr style="background:#f0fdfa">
+        <td style="padding:3px 6px 3px 24px;font-size:11px;color:var(--muted)">↳ ${esc(liName)}</td>
+        <td></td>
+        <td style="font-size:11px;color:var(--muted)">${esc(liSplit) || '—'}</td>
+        <td style="text-align:center">${statusBadge(liDisp)}</td>
+        <td style="font-size:12px;font-weight:600">${liOwes ? fmt$(liCppV) : '—'}</td>
+      </tr>`;
+    });
   });
   if (!evtBodyHtml) evtBodyHtml = '<tr class="empty-row"><td colspan="5">No event history yet</td></tr>';
 
@@ -1155,6 +1249,32 @@ function renderDashboard() {
       <div class="stat-sub">${nSettled} of ${enriched.length} settled</div>
     </div>`;
 
+  // Season group filter toggle (treasurer-only)
+  const allGroups = getSettingsRows().map(r => String(r['Season Group'] || Object.values(r)[0] || '').trim()).filter(Boolean);
+  if (allGroups.length > 0) {
+    const currentGroups = getActiveGroups() || allGroups;
+    const btns = allGroups.map(g => {
+      const on = currentGroups.includes(g);
+      return `<button onclick="toggleGroup('${g.replace(/\\/g,'\\\\').replace(/'/g,'\\\'')}')"
+        style="padding:5px 14px;border-radius:20px;border:1.5px solid ${on ? 'var(--navy)' : 'var(--border)'};
+               background:${on ? 'var(--navy)' : 'transparent'};color:${on ? '#fff' : 'var(--muted)'};
+               font-size:12px;font-weight:600;cursor:pointer;transition:all .15s">${esc(g)}</button>`;
+    }).join('');
+    const isDefault = _groupOverride === null;
+    document.getElementById('dash-group-filter').innerHTML = `
+      <div class="card" style="padding:.65rem 1.25rem">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Player Balance Filter:</span>
+          ${btns}
+          ${!isDefault ? `<button onclick="resetGroupFilter()"
+            style="padding:5px 12px;border-radius:20px;border:1.5px solid var(--border);background:transparent;font-size:12px;color:var(--muted);cursor:pointer">
+            Reset to Default</button>` : ''}
+        </div>
+      </div>`;
+  } else {
+    document.getElementById('dash-group-filter').innerHTML = '';
+  }
+
   // Financial overview — exclude Fundraiser events from expense totals
   const nonFundraiserEvts = evtRows.filter(r => String(r['Category']||Object.values(r)[3]||'').trim() !== 'Fundraiser');
   const totalBudget = nonFundraiserEvts.reduce((s, r) => s + (parseFloat(r['Budgeted Cost ($)']||Object.values(r)[5])||0), 0);
@@ -1290,6 +1410,17 @@ function renderDashboard() {
   });
   if (!balHtml) balHtml = '<tr class="empty-row"><td colspan="6">No balance data</td></tr>';
   document.getElementById('dash-balances-tbody').innerHTML = balHtml;
+}
+
+function toggleGroup(g) {
+  const allGroups = getSettingsRows().map(r => String(r['Season Group'] || Object.values(r)[0] || '').trim()).filter(Boolean);
+  const cur = _groupOverride !== null ? [..._groupOverride] : (getActiveGroups() || [...allGroups]);
+  _groupOverride = cur.includes(g) ? cur.filter(x => x !== g) : [...cur, g];
+  renderDashboard();
+}
+function resetGroupFilter() {
+  _groupOverride = null;
+  renderDashboard();
 }
 
 function showLoading(show) {

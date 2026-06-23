@@ -40,6 +40,3 @@ Please completely redo these formulas and make sure they're correct.
 
 -------------
 
-# Iter 3
-
-I may have confused you. 
