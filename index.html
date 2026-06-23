@@ -810,6 +810,9 @@ function renderMyBalance() {
       return s + ((split === 'Equal Split' || attVal === '1') && cpp > 0 ? cpp : 0);
     }, 0);
 
+    // Skip events where the player has no cost (didn't attend any line items)
+    if (myEvtCost === 0) return;
+
     // Event header row
     evtBodyHtml += `<tr style="background:var(--navy-light)">
       <td style="font-weight:700;color:var(--navy)">${esc(evtName)}</td>
