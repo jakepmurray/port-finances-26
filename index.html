@@ -205,7 +205,10 @@ tr:hover td { background: #f8fafc; }
       <div id="balance-hero-wrap"></div>
       <div class="stat-grid cols-3" id="player-stats"></div>
       <div class="card">
-        <div class="card-title">📅 My Event History</div>
+        <div class="card-title" style="display:flex;align-items:center;justify-content:space-between;">
+          <span>📅 My Event History</span>
+          <a href="https://docs.google.com/spreadsheets/d/1WR5GppNjasS1aJiPm2roCtO-f821Xvkx/edit?gid=1510454590#gid=1510454590" target="_blank" rel="noopener" style="font-size:12px;font-weight:500;color:var(--navy);text-decoration:none;padding:4px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);transition:background .2s;" onmouseover="this.style.background='var(--navy-light)'" onmouseout="this.style.background='var(--bg)'">➕ Add Transaction</a>
+        </div>
         <div class="table-wrap">
           <table><thead><tr><th>Event</th><th>Date</th><th>Type</th><th>Attended</th><th>My Cost</th></tr></thead>
           <tbody id="player-events-tbody"></tbody></table>
