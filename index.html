@@ -248,7 +248,7 @@ tr:hover td { background: #f8fafc; }
     <div id="section-mybalance" class="section">
       <div id="balance-hero-wrap"></div>
       <div class="stat-grid cols-3" id="player-stats"></div>
-      <div class="card">
+      <div class="card" id="mybalance-events-card">
         <div class="card-title" style="display:flex;align-items:center;justify-content:space-between;">
           <span>📅 My Event History</span>
           <a href="https://docs.google.com/spreadsheets/d/1WR5GppNjasS1aJiPm2roCtO-f821Xvkx/edit?gid=1510454590#gid=1510454590" target="_blank" rel="noopener" style="font-size:12px;font-weight:500;color:var(--navy);text-decoration:none;padding:4px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);transition:background .2s;" onmouseover="this.style.background='var(--navy-light)'" onmouseout="this.style.background='var(--bg)'">➕ Add Transaction</a>
@@ -792,6 +792,28 @@ function buildChargedMap() {
   return { chargedMap, txCpp, evtLookup, expenseTx, guestMap };
 }
 
+// Credit transactions (Type = "Credit") apply against a specific player's season
+// total. "Reimbursed To" holds the player being credited; "Paid By" holds whoever
+// applied the credit (funded out of team fundraising money), so we key off
+// Reimbursed To rather than Paid By.
+function buildCreditMap() {
+  const creditMap = {};
+  getTxRows().forEach(tx => {
+    const type = String(tx['Type'] || Object.values(tx)[3] || '').trim();
+    if (type !== 'Credit') return;
+    const name = String(tx['Reimbursed To'] || Object.values(tx)[7] || '').trim();
+    const amt  = parseFloat(tx['Amount ($)'] || Object.values(tx)[5]) || 0;
+    if (name) creditMap[name] = (creditMap[name] || 0) + amt;
+  });
+  return creditMap;
+}
+function getCreditRowsFor(name) {
+  return getTxRows().filter(tx =>
+    String(tx['Type'] || Object.values(tx)[3] || '').trim() === 'Credit' &&
+    String(tx['Reimbursed To'] || Object.values(tx)[7] || '').trim() === name
+  );
+}
+
 // ── MY BALANCE (player view) ───────────────────────────────────────────
 function renderMyBalance() {
   const balRows = getBalanceRows();
@@ -802,12 +824,14 @@ function renderMyBalance() {
   const { chargedMap, txCpp, evtLookup, expenseTx, guestMap } = buildChargedMap();
   // guests whose charges are billed to this player
   const myGuests = Object.entries(guestMap).filter(([,p]) => p === USER.name).map(([g]) => g);
+  const myCreditTx = getCreditRowsFor(USER.name);
+  const myCredit   = myCreditTx.reduce((s, tx) => s + (parseFloat(tx['Amount ($)'] || Object.values(tx)[5]) || 0), 0);
   let net = 0, charged = 0, totalPaid = 0, paidUpfront = 0, standing = '';
   if (myBal) {
     charged     = chargedMap[USER.name] || 0;
     totalPaid   = parseFloat(myBal['Total Paid ($)']             || Object.values(myBal)[2]) || 0;
     paidUpfront = parseFloat(myBal['Paid Upfront For Team ($)']  || Object.values(myBal)[3]) || 0;
-    net         = charged - totalPaid - paidUpfront;
+    net         = charged - totalPaid - paidUpfront - myCredit;
     standing    = String(myBal['Status']                         || Object.values(myBal)[5] || '').trim();
   }
 
@@ -824,9 +848,11 @@ function renderMyBalance() {
       <button class="pay-dues-btn" onclick="openVenmoModal()">💸 Pay Dues</button>
     </div>`;
 
+  document.getElementById('player-stats').className = 'stat-grid ' + (myCredit > 0 ? 'cols-4' : 'cols-3');
   document.getElementById('player-stats').innerHTML = `
     <div class="stat-card"><div class="stat-label">Total charged</div><div class="stat-value">${fmt$(charged)}</div></div>
     <div class="stat-card"><div class="stat-label">Total paid</div><div class="stat-value green">${fmt$(totalPaid)}</div></div>
+    ${myCredit > 0 ? `<div class="stat-card"><div class="stat-label">Credits applied</div><div class="stat-value navy">${fmt$(myCredit)}</div></div>` : ''}
     <div class="stat-card"><div class="stat-label">Net balance</div><div class="stat-value ${net>0.5?'red':net<-0.5?'navy':'green'}">${fmt$(Math.abs(net))}</div></div>`;
 
   // Payment progress bar
@@ -917,13 +943,40 @@ function renderMyBalance() {
 
   // Insert progress bar before event card
   const section = document.getElementById('section-mybalance');
+  const eventsCard = document.getElementById('mybalance-events-card');
   let progCard = document.getElementById('dues-progress-card');
   if (!progCard) {
     progCard = document.createElement('div');
     progCard.id = 'dues-progress-card';
-    section.insertBefore(progCard, document.querySelector('#section-mybalance .card'));
+    section.insertBefore(progCard, eventsCard);
   }
   progCard.innerHTML = progressHtml;
+
+  // Credits card — only shown for players with Credit transactions applied to their account
+  let creditCard = document.getElementById('mybalance-credits-card');
+  if (myCreditTx.length > 0) {
+    if (!creditCard) {
+      creditCard = document.createElement('div');
+      creditCard.id = 'mybalance-credits-card';
+      section.insertBefore(creditCard, eventsCard);
+    }
+    const creditRowsHtml = myCreditTx.map(tx => {
+      const date = fmtDate(tx['Date'] || Object.values(tx)[0]);
+      const desc = String(tx['Description'] || Object.values(tx)[1] || '').trim();
+      const amt  = parseFloat(tx['Amount ($)'] || Object.values(tx)[5]) || 0;
+      return `<tr><td>${esc(date)}</td><td>${esc(desc)}</td><td style="font-weight:600;color:var(--navy)">-${fmt$(amt)}</td></tr>`;
+    }).join('');
+    creditCard.innerHTML = `
+      <div class="card">
+        <div class="card-title">💳 Credits Applied</div>
+        <div class="table-wrap">
+          <table><thead><tr><th>Date</th><th>Description</th><th>Amount</th></tr></thead>
+          <tbody>${creditRowsHtml}</tbody></table>
+        </div>
+      </div>`;
+  } else if (creditCard) {
+    creditCard.remove();
+  }
 }
 
 // ── ROSTER ─────────────────────────────────────────────────────────────
@@ -949,6 +1002,7 @@ function renderRoster() {
   const balRows = getBalanceRows();
   const txRows  = getTxRows();
   const { chargedMap: rosterChargedMap } = buildChargedMap();
+  const rosterCreditMap = buildCreditMap();
   const showBalance = USER.tier === 'coach';
 
   let html = '';
@@ -973,7 +1027,7 @@ function renderRoster() {
     const balRow = balRows.find(b => String(b['Player Name']||Object.values(b)[0]||'').trim() === name);
     const bPaid  = balRow ? (parseFloat(balRow['Total Paid ($)']            || Object.values(balRow)[2]) || 0) : 0;
     const bUpfrt = balRow ? (parseFloat(balRow['Paid Upfront For Team ($)'] || Object.values(balRow)[3]) || 0) : 0;
-    const net    = dues - bPaid - bUpfrt;
+    const net    = dues - bPaid - bUpfrt - (rosterCreditMap[name] || 0);
 
     html += `<tr>
       <td><strong>${esc(name)}</strong></td>
@@ -1139,8 +1193,8 @@ function renderTransactions() {
     html += `<tr>
       <td>${esc(date)}</td><td>${esc(desc)}</td>
       <td><span class="badge badge-navy">${esc(cat)}</span></td>
-      <td><span class="badge ${type==='Income'?'badge-green':type==='Fundraiser'?'badge-gold':'badge-red'}">${esc(type)}</span></td>
-      <td style="font-weight:600;color:${type==='Expense'?'var(--red)':'var(--green)'}">${type==='Expense'?'-':'+'}${fmt$(amt)}</td>
+      <td><span class="badge ${type==='Income'?'badge-green':type==='Fundraiser'?'badge-gold':type==='Credit'?'badge-blue':'badge-red'}">${esc(type)}</span></td>
+      <td style="font-weight:600;color:${type==='Expense'?'var(--red)':type==='Credit'?'var(--navy)':'var(--green)'}">${type==='Expense'||type==='Credit'?'-':'+'}${fmt$(amt)}</td>
       <td>${statusBadge(stat)}</td>
     </tr>`;
   });
@@ -1156,12 +1210,13 @@ function renderStanding() {
   const { roleMap: acRoleMap } = buildAcMaps();
 
   const { chargedMap } = buildChargedMap();
+  const standingCreditMap = buildCreditMap();
   const enriched = balRows.map(r => {
     const name    = String(r['Player Name'] || Object.values(r)[0] || '').trim();
     const charged = chargedMap[name] || 0;
     const paid    = parseFloat(r['Total Paid ($)']            || Object.values(r)[2]) || 0;
     const upfront = parseFloat(r['Paid Upfront For Team ($)'] || Object.values(r)[3]) || 0;
-    const net     = charged - paid - upfront;
+    const net     = charged - paid - upfront - (standingCreditMap[name] || 0);
     const status  = String(r['Status']      || Object.values(r)[5] || '').trim();
     const rr      = rosterRows.find(p => String(p['Full Name'] || Object.values(p)[0] || '').trim() === name);
     const role    = acRoleMap[name] || getRoleFromRow(rr) || '—';
@@ -1315,16 +1370,18 @@ function renderDashboard() {
 
   // Enrich balance rows — compute charged from raw data, not xlsx cache
   const { chargedMap } = buildChargedMap();
+  const dashCreditMap = buildCreditMap();
   const enriched = balRows.map(r => {
     const name    = String(r['Player Name']            || Object.values(r)[0] || '').trim();
     const charged = chargedMap[name] || 0;
     const paid    = parseFloat(r['Total Paid ($)']     || Object.values(r)[2]) || 0;
     const upfront = parseFloat(r['Paid Upfront For Team ($)'] || Object.values(r)[3]) || 0;
-    const net     = charged - paid - upfront;
+    const credit  = dashCreditMap[name] || 0;
+    const net     = charged - paid - upfront - credit;
     const status  = String(r['Status']                 || Object.values(r)[5] || '').trim();
     const rr      = rosterRows.find(p => String(p['Full Name']||Object.values(p)[0]||'').trim() === name);
     const role    = acRoleMap[name] || getRoleFromRow(rr) || '—';
-    return { name, charged, paid, net, status, role };
+    return { name, charged, paid, credit, net, status, role };
   }).filter(p => p.name);
 
   const totalOwed    = enriched.reduce((s, p) => p.net >  0.5 ? s + p.net        : s, 0);
