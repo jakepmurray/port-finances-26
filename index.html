@@ -338,6 +338,18 @@ tr:hover td { background: #f8fafc; }
           </table>
         </div>
       </div>
+      <div class="card" id="fundraiser-credits-card" style="display:none">
+        <div class="card-title">💳 Credits Applied (from Fundraising)</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Date</th><th>Description</th><th>Applied To</th><th>Applied By</th>
+              <th style="text-align:right">Amount</th><th>Status</th>
+            </tr></thead>
+            <tbody id="fundraiser-credits-tbody"></tbody>
+          </table>
+        </div>
+      </div>
     </div>
 
     <!-- DASHBOARD (Treasurer only) -->
@@ -1336,6 +1348,12 @@ function renderFundraisers() {
   const totalPending = pendingRows.reduce((s,r) => s+(parseFloat(r['Amount ($)']||Object.values(r)[5])||0), 0);
   const totalCleared = clearedRows.reduce((s,r) => s+(parseFloat(r['Amount ($)']||Object.values(r)[5])||0), 0);
 
+  // Credits are applied against a player's season total but funded out of
+  // team fundraising money, so they draw down what's actually available here.
+  const creditRows    = txRows.filter(r => String(r['Type']||Object.values(r)[3]||'').trim() === 'Credit');
+  const totalCredited = creditRows.reduce((s,r) => s+(parseFloat(r['Amount ($)']||Object.values(r)[5])||0), 0);
+  const remaining     = totalRaised - totalCredited;
+
   document.getElementById('fundraiser-stats').innerHTML = `
     <div class="stat-card">
       <div class="stat-label">Total Raised</div>
@@ -1351,6 +1369,16 @@ function renderFundraisers() {
       <div class="stat-label">Deposited</div>
       <div class="stat-value green">${fmt$(totalCleared)}</div>
       <div class="stat-sub">${clearedRows.length} cleared</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Credits Applied</div>
+      <div class="stat-value navy">${fmt$(totalCredited)}</div>
+      <div class="stat-sub">${creditRows.length} credit${creditRows.length!==1?'s':''} issued</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Remaining Balance</div>
+      <div class="stat-value ${remaining>=0?'green':'red'}">${fmt$(remaining)}</div>
+      <div class="stat-sub">Raised minus credits applied</div>
     </div>`;
 
   // Group by Linked Event, fall back to Description
@@ -1391,6 +1419,31 @@ function renderFundraisers() {
     });
   }
   document.getElementById('fundraiser-tbody').innerHTML = html;
+
+  // Credits Applied card — only shown once at least one Credit transaction exists
+  const creditsCard = document.getElementById('fundraiser-credits-card');
+  if (creditRows.length > 0) {
+    creditsCard.style.display = '';
+    const creditHtml = [...creditRows].reverse().map(r => {
+      const date       = fmtDate(r['Date'] || Object.values(r)[0]);
+      const desc       = String(r['Description']    || Object.values(r)[1] || '').trim();
+      const appliedTo  = String(r['Reimbursed To']   || Object.values(r)[7] || '—').trim();
+      const appliedBy  = String(r['Paid By']         || Object.values(r)[4] || '—').trim();
+      const amt        = parseFloat(r['Amount ($)']  || Object.values(r)[5]) || 0;
+      const stat       = String(r['Status']          || Object.values(r)[8] || '').trim();
+      return `<tr>
+        <td>${esc(date)}</td>
+        <td>${esc(desc)}</td>
+        <td><strong>${esc(appliedTo)}</strong></td>
+        <td>${esc(appliedBy)}</td>
+        <td style="text-align:right;font-weight:600;color:var(--navy)">-${fmt$(amt)}</td>
+        <td>${statusBadge(stat)}</td>
+      </tr>`;
+    }).join('');
+    document.getElementById('fundraiser-credits-tbody').innerHTML = creditHtml;
+  } else {
+    creditsCard.style.display = 'none';
+  }
 }
 
 // ── DASHBOARD (Treasurer only) ──────────────────────────────────────────
