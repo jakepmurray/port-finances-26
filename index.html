@@ -792,25 +792,54 @@ function buildChargedMap() {
   return { chargedMap, txCpp, evtLookup, expenseTx, guestMap };
 }
 
+// Name matching mirrors Excel/Sheets SUMIFS, which compares text case-insensitively —
+// Transactions has inconsistent casing in Paid By (e.g. "Jake Murray" vs "jake murray"),
+// so an exact-case JS match would silently undercount real totals.
+const namesMatch = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+function getRosterNames() {
+  return getRosterRows().map(r => String(r['Full Name'] || Object.values(r)[0] || '').trim()).filter(Boolean);
+}
+
 // Credit transactions (Type = "Credit") apply against a specific player's season
 // total. "Reimbursed To" holds the player being credited; "Paid By" holds whoever
 // applied the credit (funded out of team fundraising money), so we key off
 // Reimbursed To rather than Paid By.
 function buildCreditMap() {
+  const creditRows = getTxRows().filter(tx => String(tx['Type'] || Object.values(tx)[3] || '').trim() === 'Credit');
   const creditMap = {};
-  getTxRows().forEach(tx => {
-    const type = String(tx['Type'] || Object.values(tx)[3] || '').trim();
-    if (type !== 'Credit') return;
-    const name = String(tx['Reimbursed To'] || Object.values(tx)[7] || '').trim();
-    const amt  = parseFloat(tx['Amount ($)'] || Object.values(tx)[5]) || 0;
-    if (name) creditMap[name] = (creditMap[name] || 0) + amt;
+  getRosterNames().forEach(name => {
+    const total = creditRows
+      .filter(tx => namesMatch(tx['Reimbursed To'] || Object.values(tx)[7], name))
+      .reduce((s, tx) => s + (parseFloat(tx['Amount ($)'] || Object.values(tx)[5]) || 0), 0);
+    if (total) creditMap[name] = total;
   });
   return creditMap;
 }
 function getCreditRowsFor(name) {
   return getTxRows().filter(tx =>
     String(tx['Type'] || Object.values(tx)[3] || '').trim() === 'Credit' &&
-    String(tx['Reimbursed To'] || Object.values(tx)[7] || '').trim() === name
+    namesMatch(tx['Reimbursed To'] || Object.values(tx)[7], name)
+  );
+}
+
+// Money a player spent out of pocket on team expenses ("Paid Upfront For Team")
+// also applies against their season total, same as a formal Credit — computed
+// fresh from Transactions so it lines up with the itemized list shown on their page.
+function buildUpfrontMap() {
+  const expenseRows = getTxRows().filter(tx => String(tx['Type'] || Object.values(tx)[3] || '').trim() === 'Expense');
+  const upfrontMap = {};
+  getRosterNames().forEach(name => {
+    const total = expenseRows
+      .filter(tx => namesMatch(tx['Paid By'] || Object.values(tx)[4], name))
+      .reduce((s, tx) => s + (parseFloat(tx['Amount ($)'] || Object.values(tx)[5]) || 0), 0);
+    if (total) upfrontMap[name] = total;
+  });
+  return upfrontMap;
+}
+function getUpfrontRowsFor(name) {
+  return getTxRows().filter(tx =>
+    String(tx['Type'] || Object.values(tx)[3] || '').trim() === 'Expense' &&
+    namesMatch(tx['Paid By'] || Object.values(tx)[4], name)
   );
 }
 
@@ -826,11 +855,13 @@ function renderMyBalance() {
   const myGuests = Object.entries(guestMap).filter(([,p]) => p === USER.name).map(([g]) => g);
   const myCreditTx = getCreditRowsFor(USER.name);
   const myCredit   = myCreditTx.reduce((s, tx) => s + (parseFloat(tx['Amount ($)'] || Object.values(tx)[5]) || 0), 0);
+  const myUpfrontTx = getUpfrontRowsFor(USER.name);
+  const myUpfront    = myUpfrontTx.reduce((s, tx) => s + (parseFloat(tx['Amount ($)'] || Object.values(tx)[5]) || 0), 0);
   let net = 0, charged = 0, totalPaid = 0, paidUpfront = 0, standing = '';
   if (myBal) {
     charged     = chargedMap[USER.name] || 0;
     totalPaid   = parseFloat(myBal['Total Paid ($)']             || Object.values(myBal)[2]) || 0;
-    paidUpfront = parseFloat(myBal['Paid Upfront For Team ($)']  || Object.values(myBal)[3]) || 0;
+    paidUpfront = myUpfront;
     net         = charged - totalPaid - paidUpfront - myCredit;
     standing    = String(myBal['Status']                         || Object.values(myBal)[5] || '').trim();
   }
@@ -848,11 +879,12 @@ function renderMyBalance() {
       <button class="pay-dues-btn" onclick="openVenmoModal()">💸 Pay Dues</button>
     </div>`;
 
-  document.getElementById('player-stats').className = 'stat-grid ' + (myCredit > 0 ? 'cols-4' : 'cols-3');
+  const totalCreditsApplied = myCredit + myUpfront;
+  document.getElementById('player-stats').className = 'stat-grid ' + (totalCreditsApplied > 0 ? 'cols-4' : 'cols-3');
   document.getElementById('player-stats').innerHTML = `
     <div class="stat-card"><div class="stat-label">Total charged</div><div class="stat-value">${fmt$(charged)}</div></div>
     <div class="stat-card"><div class="stat-label">Total paid</div><div class="stat-value green">${fmt$(totalPaid)}</div></div>
-    ${myCredit > 0 ? `<div class="stat-card"><div class="stat-label">Credits applied</div><div class="stat-value navy">${fmt$(myCredit)}</div></div>` : ''}
+    ${totalCreditsApplied > 0 ? `<div class="stat-card"><div class="stat-label">Credits applied</div><div class="stat-value navy">${fmt$(totalCreditsApplied)}</div></div>` : ''}
     <div class="stat-card"><div class="stat-label">Net balance</div><div class="stat-value ${net>0.5?'red':net<-0.5?'navy':'green'}">${fmt$(Math.abs(net))}</div></div>`;
 
   // Payment progress bar
@@ -952,9 +984,10 @@ function renderMyBalance() {
   }
   progCard.innerHTML = progressHtml;
 
-  // Credits card — only shown for players with Credit transactions applied to their account
+  // Credits card — shown for players with a formal Credit and/or money they paid
+  // upfront for team expenses (both reduce what they owe against the season total)
   let creditCard = document.getElementById('mybalance-credits-card');
-  if (myCreditTx.length > 0) {
+  if (myCreditTx.length > 0 || myUpfrontTx.length > 0) {
     if (!creditCard) {
       creditCard = document.createElement('div');
       creditCard.id = 'mybalance-credits-card';
@@ -964,14 +997,20 @@ function renderMyBalance() {
       const date = fmtDate(tx['Date'] || Object.values(tx)[0]);
       const desc = String(tx['Description'] || Object.values(tx)[1] || '').trim();
       const amt  = parseFloat(tx['Amount ($)'] || Object.values(tx)[5]) || 0;
-      return `<tr><td>${esc(date)}</td><td>${esc(desc)}</td><td style="font-weight:600;color:var(--navy)">-${fmt$(amt)}</td></tr>`;
+      return `<tr><td>${esc(date)}</td><td>${esc(desc)}</td><td><span class="badge badge-blue">Credit</span></td><td style="font-weight:600;color:var(--navy)">-${fmt$(amt)}</td></tr>`;
+    }).join('');
+    const upfrontRowsHtml = myUpfrontTx.map(tx => {
+      const date = fmtDate(tx['Date'] || Object.values(tx)[0]);
+      const desc = String(tx['Description'] || Object.values(tx)[1] || '').trim();
+      const amt  = parseFloat(tx['Amount ($)'] || Object.values(tx)[5]) || 0;
+      return `<tr><td>${esc(date)}</td><td>${esc(desc)}</td><td><span class="badge badge-gold">Paid Upfront</span></td><td style="font-weight:600;color:var(--navy)">-${fmt$(amt)}</td></tr>`;
     }).join('');
     creditCard.innerHTML = `
       <div class="card">
         <div class="card-title">💳 Credits Applied</div>
         <div class="table-wrap">
-          <table><thead><tr><th>Date</th><th>Description</th><th>Amount</th></tr></thead>
-          <tbody>${creditRowsHtml}</tbody></table>
+          <table><thead><tr><th>Date</th><th>Description</th><th>Source</th><th>Amount</th></tr></thead>
+          <tbody>${creditRowsHtml}${upfrontRowsHtml}</tbody></table>
         </div>
       </div>`;
   } else if (creditCard) {
@@ -1003,6 +1042,7 @@ function renderRoster() {
   const txRows  = getTxRows();
   const { chargedMap: rosterChargedMap } = buildChargedMap();
   const rosterCreditMap = buildCreditMap();
+  const rosterUpfrontMap = buildUpfrontMap();
   const showBalance = USER.tier === 'coach';
 
   let html = '';
@@ -1026,7 +1066,7 @@ function renderRoster() {
 
     const balRow = balRows.find(b => String(b['Player Name']||Object.values(b)[0]||'').trim() === name);
     const bPaid  = balRow ? (parseFloat(balRow['Total Paid ($)']            || Object.values(balRow)[2]) || 0) : 0;
-    const bUpfrt = balRow ? (parseFloat(balRow['Paid Upfront For Team ($)'] || Object.values(balRow)[3]) || 0) : 0;
+    const bUpfrt = rosterUpfrontMap[name] || 0;
     const net    = dues - bPaid - bUpfrt - (rosterCreditMap[name] || 0);
 
     html += `<tr>
@@ -1211,11 +1251,12 @@ function renderStanding() {
 
   const { chargedMap } = buildChargedMap();
   const standingCreditMap = buildCreditMap();
+  const standingUpfrontMap = buildUpfrontMap();
   const enriched = balRows.map(r => {
     const name    = String(r['Player Name'] || Object.values(r)[0] || '').trim();
     const charged = chargedMap[name] || 0;
     const paid    = parseFloat(r['Total Paid ($)']            || Object.values(r)[2]) || 0;
-    const upfront = parseFloat(r['Paid Upfront For Team ($)'] || Object.values(r)[3]) || 0;
+    const upfront = standingUpfrontMap[name] || 0;
     const net     = charged - paid - upfront - (standingCreditMap[name] || 0);
     const status  = String(r['Status']      || Object.values(r)[5] || '').trim();
     const rr      = rosterRows.find(p => String(p['Full Name'] || Object.values(p)[0] || '').trim() === name);
@@ -1371,11 +1412,12 @@ function renderDashboard() {
   // Enrich balance rows — compute charged from raw data, not xlsx cache
   const { chargedMap } = buildChargedMap();
   const dashCreditMap = buildCreditMap();
+  const dashUpfrontMap = buildUpfrontMap();
   const enriched = balRows.map(r => {
     const name    = String(r['Player Name']            || Object.values(r)[0] || '').trim();
     const charged = chargedMap[name] || 0;
     const paid    = parseFloat(r['Total Paid ($)']     || Object.values(r)[2]) || 0;
-    const upfront = parseFloat(r['Paid Upfront For Team ($)'] || Object.values(r)[3]) || 0;
+    const upfront = dashUpfrontMap[name] || 0;
     const credit  = dashCreditMap[name] || 0;
     const net     = charged - paid - upfront - credit;
     const status  = String(r['Status']                 || Object.values(r)[5] || '').trim();
