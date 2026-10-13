@@ -186,6 +186,13 @@ tr:hover td { background: #f8fafc; }
 .alert-warn { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
 .alert-info { background: #dbeafe; color: #1e40af; border: 1px solid #93c5fd; }
 
+.dash-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; margin-bottom: 1.25rem; }
+.dash-2col > .card { margin-bottom: 0; }
+.recon-row { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.recon-row .note { font-size: 11px; color: var(--muted); }
+@media (max-width: 900px) {
+  .dash-2col { grid-template-columns: 1fr; }
+}
 @media (max-width: 640px) {
   .stat-grid.cols-4 { grid-template-columns: repeat(2, minmax(0,1fr)); }
   .stat-grid.cols-3 { grid-template-columns: repeat(2, minmax(0,1fr)); }
@@ -369,24 +376,24 @@ tr:hover td { background: #f8fafc; }
     <div id="section-dashboard" class="section">
       <div class="stat-grid cols-4" id="dash-stats"></div>
       <div id="dash-group-filter" style="margin-bottom:1.25rem"></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.25rem;margin-bottom:1.25rem">
+      <div class="card" id="dash-alert-card" style="display:none;border-left:4px solid var(--red);margin-bottom:1.25rem">
+        <div class="card-title" style="color:var(--red)">⚠ Open Balances</div>
+        <div id="dash-alert-list"></div>
+      </div>
+      <div class="dash-2col">
         <div class="card">
-          <div class="card-title">💰 Financial Overview</div>
+          <div class="card-title">⚖️ Settle-Up Check</div>
           <div id="dash-finance"></div>
         </div>
         <div class="card">
-          <div class="card-title">📊 Events Overview</div>
+          <div class="card-title">📊 Cost by Event</div>
           <div id="dash-events"></div>
         </div>
-      </div>
-      <div class="card" id="dash-alert-card" style="display:none;border-left:4px solid var(--red);margin-bottom:1.25rem">
-        <div class="card-title" style="color:var(--red)">⚠ Needs Attention</div>
-        <div id="dash-alert-list"></div>
       </div>
       <div class="card">
         <div class="card-title">💳 Full Player Balance Breakdown</div>
         <div class="table-wrap">
-          <table><thead><tr><th>Player</th><th>Role</th><th>Total Charged</th><th>Paid</th><th>Net Balance</th><th>Status</th></tr></thead>
+          <table><thead><tr><th>Player</th><th>Role</th><th>Charged</th><th>Dues Paid</th><th>Paid Upfront</th><th>Credits</th><th>Held / Reimb.</th><th>Net Balance</th><th>Standing</th></tr></thead>
           <tbody id="dash-balances-tbody"></tbody></table>
         </div>
       </div>
@@ -669,7 +676,8 @@ function getAttendanceRows() {
   return (DATA['Attendance'] || []).filter(r => {
     const name = String(r['Player Name'] || Object.values(r)[0] || '').trim();
     return name && !['Player Name','ATTENDANCE','Cost per Person ($) [auto]'].includes(name)
-      && isNaN(Number(name));
+      && isNaN(Number(name))
+      && !/^total\b/i.test(name); // "Total Attendees" / "Total Cost ($)" summary rows aren't people
   });
 }
 function getLineItemRows() {
@@ -814,7 +822,7 @@ function buildChargedMap() {
     }
   });
 
-  return { chargedMap, txCpp, evtLookup, expenseTx, guestMap };
+  return { chargedMap, txCpp, evtLookup, expenseTx, guestMap, activeCount, attRows };
 }
 
 // Name matching mirrors Excel/Sheets SUMIFS, which compares text case-insensitively —
@@ -1580,71 +1588,120 @@ function renderFundraisers() {
 }
 
 // ── DASHBOARD (Treasurer only) ──────────────────────────────────────────
+// Balances smaller than this are treated as settled on the dashboard — small
+// attendance tweaks can leave people owing a few cents. Remembered per browser.
+let _smallBalThreshold = (() => {
+  try { const v = parseFloat(localStorage.getItem('dashSmallBalThreshold')); return isNaN(v) ? 1 : v; }
+  catch (e) { return 1; }
+})();
+function setSmallBalThreshold(v) {
+  const n = parseFloat(v);
+  _smallBalThreshold = isNaN(n) || n < 0 ? 0 : n;
+  try { localStorage.setItem('dashSmallBalThreshold', String(_smallBalThreshold)); } catch (e) {}
+  renderDashboard();
+}
+
 function renderDashboard() {
   const balRows    = getBalanceRows();
   const rosterRows = getRosterRows();
   const txRows     = getTxRows();
   const evtRows    = getEventsRows();
   const { roleMap: acRoleMap } = buildAcMaps();
-
-  // Totals from Transactions (Fundraiser counts as income, matching the spreadsheet formula)
-  const totalIn  = txRows.filter(r => { const t=String(r['Type']||Object.values(r)[3]||'').trim(); return t==='Income'||t==='Fundraiser'; })
-                         .reduce((s, r) => s + (parseFloat(r['Amount ($)']||Object.values(r)[5])||0), 0);
-  const totalOut = txRows.filter(r => String(r['Type']||Object.values(r)[3]||'').trim() === 'Expense')
-                         .reduce((s, r) => s + (parseFloat(r['Amount ($)']||Object.values(r)[5])||0), 0);
-  const pendingTx = txRows.filter(r => String(r['Status']||Object.values(r)[8]||'').trim() === 'Pending').length;
-  const teamNet   = totalIn - totalOut;
+  const txType = r => String(r['Type']    || Object.values(r)[3] || '').trim();
+  const txAmt  = r => parseFloat(r['Amount ($)'] || Object.values(r)[5]) || 0;
+  const sumAmt = rows => rows.reduce((s, r) => s + txAmt(r), 0);
 
   // Enrich balance rows — compute charged from raw data, not xlsx cache
-  const { chargedMap } = buildChargedMap();
-  const dashCreditMap = buildCreditMap();
-  const dashUpfrontMap = buildUpfrontMap();
+  const { chargedMap, txCpp, evtLookup, expenseTx, activeCount, attRows } = buildChargedMap();
+  const dashCreditMap    = buildCreditMap();
+  const dashUpfrontMap   = buildUpfrontMap();
   const dashCollectedMap = buildCollectedMap();
-  const dashReimbMap = buildReimbursementMap();
+  const dashReimbMap     = buildReimbursementMap();
   const enriched = balRows.map(r => {
-    const name    = String(r['Player Name']            || Object.values(r)[0] || '').trim();
-    const charged = chargedMap[name] || 0;
-    const paid    = parseFloat(r['Total Paid ($)']     || Object.values(r)[2]) || 0;
-    const upfront = dashUpfrontMap[name] || 0;
-    const credit  = dashCreditMap[name] || 0;
-    const net     = charged - paid - upfront - credit + (dashCollectedMap[name] || 0) + (dashReimbMap[name] || 0);
-    const status  = String(r['Status']                 || Object.values(r)[5] || '').trim();
-    const rr      = rosterRows.find(p => String(p['Full Name']||Object.values(p)[0]||'').trim() === name);
-    const role    = acRoleMap[name] || getRoleFromRow(rr) || '—';
-    return { name, charged, paid, credit, net, status, role };
+    const name      = String(r['Player Name']        || Object.values(r)[0] || '').trim();
+    const charged   = chargedMap[name] || 0;
+    const paid      = parseFloat(r['Total Paid ($)'] || Object.values(r)[2]) || 0;
+    const upfront   = dashUpfrontMap[name] || 0;
+    const credit    = dashCreditMap[name] || 0;
+    const adjust    = sumAmt(getCreditRowsFor(name).filter(tx => txType(tx) === 'Adjustment'));
+    const collected = dashCollectedMap[name] || 0;
+    const reimb     = dashReimbMap[name] || 0;
+    const net       = charged - paid - upfront - credit + collected + reimb;
+    const rr        = rosterRows.find(p => String(p['Full Name']||Object.values(p)[0]||'').trim() === name);
+    const role      = acRoleMap[name] || getRoleFromRow(rr) || '—';
+    return { name, charged, paid, upfront, credit, adjust, collected, reimb, net, role };
   }).filter(p => p.name);
 
-  const totalOwed    = enriched.reduce((s, p) => p.net >  0.5 ? s + p.net        : s, 0);
-  const totalCredits = enriched.reduce((s, p) => p.net < -0.5 ? s + Math.abs(p.net) : s, 0);
-  const nOwes        = enriched.filter(p => p.net > 0.5).length;
-  const nSettled     = enriched.filter(p => Math.abs(p.net) < 0.5).length;
-  const collRate     = enriched.length > 0 ? Math.round(nSettled / enriched.length * 100) : 0;
+  // Small-balance filter: anything under the threshold counts as settled
+  const T         = _smallBalThreshold;
+  const isSettled = p => Math.abs(p.net) < Math.max(T, 0.005);
+  const owers     = enriched.filter(p => !isSettled(p) && p.net > 0).sort((a, b) => b.net - a.net);
+  const owed      = enriched.filter(p => !isSettled(p) && p.net < 0).sort((a, b) => a.net - b.net);
+  const small     = enriched.filter(p => isSettled(p) && Math.abs(p.net) >= 0.005);
+  const totalOwed = owers.reduce((s, p) => s + p.net, 0);
+  const teamOwes  = owed.reduce((s, p) => s - p.net, 0);
+  const nSettled  = enriched.length - owers.length - owed.length;
+  const plural    = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+
+  // Fundraising — credits are the only thing it pays for out of players' balances
+  const totalRaised = sumAmt(txRows.filter(r => txType(r) === 'Fundraiser'));
+  const fundCredits = sumAmt(txRows.filter(r => txType(r) === 'Credit'));
+  const fundLeft    = totalRaised - fundCredits;
+
+  // ── Settle-up reconciliation (exact — ignores the small-balance filter) ──
+  // Every net balance is charged − paid − upfront − credits + held + reimb, so
+  // (owed to team − team owes) splits exactly into these pieces. With nothing
+  // off, the only gap left is credits, which fundraising covers.
+  const sum = k => enriched.reduce((s, p) => s + p[k], 0);
+  const exactOwed  = enriched.reduce((s, p) => p.net > 0 ? s + p.net : s, 0);
+  const exactOwes  = enriched.reduce((s, p) => p.net < 0 ? s - p.net : s, 0);
+  const gap        = exactOwed - exactOwes;
+  const creditPart = -(sum('credit') - sum('adjust'));
+  const adjustPart = -sum('adjust');
+  const costPart   = sum('charged') - sum('upfront');
+  const unheldPart = -(sum('paid') - sum('collected'));
+  const reimbPart  = sum('reimb');
+  const otherPart  = gap - (creditPart + adjustPart + costPart + unheldPart + reimbPart);
+  const unexplained = gap - creditPart;
+  const balanced    = Math.abs(unexplained) < 1;
+
+  // Income rows that count toward someone's "paid" but have no holder recorded
+  const unheldRows = txRows.filter(r => txType(r) === 'Income' && txAmt(r) !== 0 && !isCollectedDues(r));
 
   // KPI cards
   document.getElementById('dash-stats').innerHTML = `
     <div class="stat-card">
-      <div class="stat-label">Team Net Balance</div>
-      <div class="stat-value ${teamNet >= 0 ? 'green' : 'red'}">${fmt$(teamNet)}</div>
-      <div class="stat-sub">Income minus expenses</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">Outstanding</div>
+      <div class="stat-label">Still Owed to Team</div>
       <div class="stat-value ${totalOwed > 0 ? 'red' : 'green'}">${fmt$(totalOwed)}</div>
-      <div class="stat-sub">${nOwes} player${nOwes !== 1 ? 's' : ''} with balance due</div>
+      <div class="stat-sub">${owers.length ? plural(owers.length, 'person owes', 'people owe') : 'Everyone caught up!'}</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Team Credits</div>
-      <div class="stat-value navy">${fmt$(totalCredits)}</div>
-      <div class="stat-sub">${enriched.filter(p => p.net < -0.5).length} player${enriched.filter(p=>p.net<-0.5).length!==1?'s':''} overpaid</div>
+      <div class="stat-label">Team Owes People</div>
+      <div class="stat-value navy">${fmt$(teamOwes)}</div>
+      <div class="stat-sub">${owed.length ? plural(owed.length, 'person', 'people') + ' to pay back' : 'Nobody to pay back'}</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Collection Rate</div>
-      <div class="stat-value ${collRate >= 80 ? 'green' : collRate >= 50 ? 'navy' : 'red'}">${collRate}%</div>
-      <div class="stat-sub">${nSettled} of ${enriched.length} settled</div>
+      <div class="stat-label">Settle-Up Check</div>
+      <div class="stat-value ${balanced ? 'green' : 'red'}">${balanced ? 'Balanced ✓' : 'Off ' + fmt$(Math.abs(unexplained))}</div>
+      <div class="stat-sub">${balanced ? 'Only fundraising credits left' : 'See breakdown below'}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Fundraising Available</div>
+      <div class="stat-value ${fundLeft >= 0 ? 'green' : 'red'}">${fmt$(fundLeft)}</div>
+      <div class="stat-sub">${fmt$(totalRaised)} raised − ${fmt$(fundCredits)} credits</div>
     </div>`;
 
-  // Season group filter toggle (treasurer-only)
+  // Controls — small-balance threshold + season group filter (treasurer-only)
+  const thresholdCtl = `
+    <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)">
+      <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em">Ignore balances under</span>
+      <span style="display:flex;align-items:center;gap:2px">$<input type="number" min="0" step="0.5" value="${T}"
+        onchange="setSmallBalThreshold(this.value)"
+        style="width:70px;padding:4px 6px;border:1.5px solid var(--border);border-radius:6px;font-size:13px"></span>
+      ${small.length ? `<span>(${plural(small.length, 'balance', 'balances')} hidden)</span>` : ''}
+    </label>`;
   const allGroups = getSettingsRows().map(r => String(r['Season Group'] || Object.values(r)[0] || '').trim()).filter(Boolean);
+  let groupCtl = '';
   if (allGroups.length > 0) {
     const currentGroups = getActiveGroups() || allGroups;
     const btns = allGroups.map(g => {
@@ -1655,154 +1712,164 @@ function renderDashboard() {
                font-size:12px;font-weight:600;cursor:pointer;transition:all .15s">${esc(g)}</button>`;
     }).join('');
     const isDefault = _groupOverride === null;
-    document.getElementById('dash-group-filter').innerHTML = `
-      <div class="card" style="padding:.65rem 1.25rem">
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Player Balance Filter:</span>
-          ${btns}
-          ${!isDefault ? `<button onclick="resetGroupFilter()"
-            style="padding:5px 12px;border-radius:20px;border:1.5px solid var(--border);background:transparent;font-size:12px;color:var(--muted);cursor:pointer">
-            Reset to Default</button>` : ''}
-        </div>
+    groupCtl = `
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Player Balance Filter:</span>
+        ${btns}
+        ${!isDefault ? `<button onclick="resetGroupFilter()"
+          style="padding:5px 12px;border-radius:20px;border:1.5px solid var(--border);background:transparent;font-size:12px;color:var(--muted);cursor:pointer">
+          Reset to Default</button>` : ''}
       </div>`;
-  } else {
-    document.getElementById('dash-group-filter').innerHTML = '';
   }
-
-  // Financial overview — exclude Fundraiser events from expense totals
-  const nonFundraiserEvts = evtRows.filter(r => String(r['Category']||Object.values(r)[3]||'').trim() !== 'Fundraiser');
-  const totalBudget = nonFundraiserEvts.reduce((s, r) => s + (parseFloat(r['Budgeted Cost ($)']||Object.values(r)[5])||0), 0);
-  const totalActual = nonFundraiserEvts.reduce((s, r) => s + (parseFloat(r['Actual Cost ($)']  ||Object.values(r)[6])||0), 0);
-  const totalRaised = txRows.filter(r => String(r['Type']||Object.values(r)[3]||'').trim() === 'Fundraiser')
-                            .reduce((s, r) => s + (parseFloat(r['Amount ($)']||Object.values(r)[5])||0), 0);
-  const budgetPct   = totalBudget > 0 ? Math.min(100, Math.round(totalActual / totalBudget * 100)) : 0;
-  const totalCharged = enriched.reduce((s, p) => s + p.charged, 0);
-  const totalPaid    = enriched.reduce((s, p) => s + p.paid,    0);
-  const collPct      = totalCharged > 0 ? Math.min(100, Math.round(totalPaid / totalCharged * 100)) : 0;
-
-  document.getElementById('dash-finance').innerHTML = `
-    <div class="progress-wrap">
-      <div class="progress-label"><span>Payments collected</span><span>${fmt$(totalPaid)} / ${fmt$(totalCharged)}</span></div>
-      <div class="progress-track"><div class="progress-fill" style="width:${collPct}%;background:var(--green)"></div></div>
-    </div>
-    <div class="progress-wrap" style="margin-top:1rem">
-      <div class="progress-label"><span>Budget used</span><span>${fmt$(totalActual)} / ${fmt$(totalBudget)}</span></div>
-      <div class="progress-track"><div class="progress-fill" style="width:${budgetPct}%;background:${budgetPct > 100 ? 'var(--red)' : 'var(--gold)'}"></div></div>
-    </div>
-    <div style="margin-top:1.25rem;font-size:13px;color:var(--muted)">
-      <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">
-        <span>Total income</span><span style="font-weight:600;color:var(--green)">${fmt$(totalIn)}</span>
-      </div>
-      <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">
-        <span>Total expenses</span><span style="font-weight:600;color:var(--red)">${fmt$(totalOut)}</span>
-      </div>
-      <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">
-        <span>Budget variance</span>
-        <span style="font-weight:600;color:${totalBudget - totalActual >= 0 ? 'var(--green)' : 'var(--red)'}">${fmt$(totalBudget - totalActual)}</span>
-      </div>
-      <div style="display:flex;justify-content:space-between;padding:6px 0">
-        <span>Pending transactions</span><span style="font-weight:600">${pendingTx}</span>
+  document.getElementById('dash-group-filter').innerHTML = `
+    <div class="card" style="padding:.65rem 1.25rem;margin-bottom:0">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px 24px;flex-wrap:wrap">
+        ${groupCtl}${thresholdCtl}
       </div>
     </div>`;
 
-  // Events overview — per-event breakdown table
-  const getEvtCat    = e => String(e['Category']           || Object.values(e)[3] || '').trim();
-  const getEvtSplit  = e => String(e['Split Method']        || '').trim();
-  const getEvtActual = e => parseFloat(e['Actual Cost ($)'] || Object.values(e)[6]) || 0;
-  const getEvtBudget = e => parseFloat(e['Budgeted Cost ($)']|| Object.values(e)[5]) || 0;
-  const getEvtName   = e => String(e['Event Name']          || Object.values(e)[0] || '').trim();
+  // Settle-up check card
+  const reconLine = (ok, label, amt, note) => `
+    <div class="recon-row">
+      <div><div>${ok ? '✓' : '⚠'} ${label}</div>${note ? `<div class="note">${note}</div>` : ''}</div>
+      <div style="font-weight:600;white-space:nowrap;color:${ok ? 'var(--navy)' : 'var(--red)'}">${fmt$(amt)}</div>
+    </div>`;
+  const nz = v => Math.abs(v) >= 0.005;
+  let reconHtml = `
+    <div class="recon-row"><span>Players owe the team</span><span style="font-weight:600;color:var(--red)">${fmt$(exactOwed)}</span></div>
+    <div class="recon-row"><span>Team owes players</span><span style="font-weight:600;color:var(--navy)">-${fmt$(exactOwes)}</span></div>
+    <div class="recon-row" style="border-bottom:2px solid var(--border)">
+      <strong>If everyone settled up today</strong>
+      <strong style="color:${gap >= 0 ? 'var(--green)' : 'var(--red)'}">${fmt$(gap)}</strong>
+    </div>
+    <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:.9rem 0 .25rem">Where that comes from</div>`;
+  reconHtml += reconLine(true, 'Credits paid from fundraising', creditPart, 'Expected — fundraising money covers these');
+  if (nz(adjustPart)) reconHtml += reconLine(false, 'Adjustments', adjustPart, 'No funding source — the team absorbs these');
+  if (nz(costPart))   reconHtml += reconLine(false, costPart < 0 ? 'Costs not charged to players' : 'Charged more than was paid', costPart,
+                                     'Paid out vs. charged — see Cost by Event');
+  if (nz(unheldPart)) reconHtml += reconLine(false, 'Payments with no holder', unheldPart,
+                                     'Counted toward the payer\'s balance, but nobody is recorded as holding the money (blank Reimbursed To, or not Dues):'
+                                     + unheldRows.map(r => `<br>&nbsp;• ${esc(String(r['Description']||Object.values(r)[1]||'').trim())} — ${esc(String(r['Paid By']||Object.values(r)[4]||'').trim() || '?')}, ${fmt$(txAmt(r))}`).join(''));
+  if (nz(reimbPart))  reconHtml += reconLine(false, 'Reimbursements with someone not on Player Balances', reimbPart, 'Check the Paid By / Reimbursed To names');
+  if (Math.abs(otherPart) >= 0.01) reconHtml += reconLine(false, 'Other / rounding', otherPart, '');
+  reconHtml += balanced
+    ? `<div style="margin-top:1rem;padding:.75rem 1rem;border-radius:8px;background:#f0fdf4;color:var(--green);font-size:13px;font-weight:600">
+         ✓ Balanced — once everyone settles, the only gap is fundraising credits. ${fmt$(fundLeft)} of fundraising money would be left.
+       </div>`
+    : `<div style="margin-top:1rem;padding:.75rem 1rem;border-radius:8px;background:#fff0f0;color:var(--red);font-size:13px">
+         <strong>${unexplained < 0 ? 'Short' : 'Over'} ${fmt$(Math.abs(unexplained))}</strong> beyond fundraising credits.
+         ${unexplained < 0
+           ? `If it isn't fixed, it comes out of fundraising money, leaving ${fmt$(fundLeft + unexplained)} instead of ${fmt$(fundLeft)}.`
+           : `The team would end up with ${fmt$(unexplained)} more than it needs.`}
+       </div>`;
+  document.getElementById('dash-finance').innerHTML = reconHtml;
 
-  const nTournament = evtRows.filter(e => getEvtCat(e) === 'Tournament').length;
-  const nPractice   = evtRows.filter(e => getEvtCat(e) === 'Practice').length;
-  const nFundraiser = evtRows.filter(e => getEvtCat(e) === 'Fundraiser').length;
-
+  // Cost by event — what people paid out vs. what was charged to players
+  const getEvtCat  = e => String(e['Category']   || Object.values(e)[3] || '').trim();
+  const getEvtName = e => String(e['Event Name'] || Object.values(e)[0] || '').trim();
   const expEvtRows = evtRows.filter(e => getEvtCat(e) !== 'Fundraiser');
-  const expEvtTable = expEvtRows.map(e => {
-    const name     = getEvtName(e);
-    const actual   = getEvtActual(e);
-    const budget   = getEvtBudget(e);
-    const split    = getEvtSplit(e) || '—';
-    const variance = budget - actual;
+  const evtStats = {};
+  const statFor = ev => evtStats[ev] || (evtStats[ev] = { paidOut: 0, charged: 0 });
+  txRows.filter(tx => txType(tx) === 'Expense' && String(tx['Paid By'] || Object.values(tx)[4] || '').trim())
+    .forEach(tx => { statFor(String(tx['Linked Event'] || Object.values(tx)[6] || '').trim()).paidOut += txAmt(tx); });
+  expenseTx.forEach(tx => {
+    const desc  = String(tx['Description']  || Object.values(tx)[1] || '').trim();
+    const ev    = String(tx['Linked Event'] || Object.values(tx)[6] || '').trim();
+    const heads = evtLookup[ev] === 'Equal Split' ? activeCount : attRows.filter(r => Number(r[desc]) === 1).length;
+    statFor(ev).charged += (txCpp[desc] || 0) * heads;
+  });
+  const evtList = expEvtRows.map(e => ({ name: getEvtName(e), split: String(e['Split Method'] || '').trim() || '—', ...statFor(getEvtName(e)) }));
+  if (evtStats[''] && (evtStats[''].paidOut || evtStats[''].charged)) evtList.push({ name: '(no linked event)', split: '—', ...evtStats[''] });
+  const totalSpend   = evtList.reduce((s, e) => s + e.paidOut, 0);
+  const totalCharged = evtList.reduce((s, e) => s + e.charged, 0);
+
+  const expEvtTable = evtList.map(e => {
+    const diff = e.charged - e.paidOut;
+    const ok   = Math.abs(diff) < 1;
     return `<tr style="border-bottom:1px solid var(--border)">
-      <td style="padding:5px 6px;font-weight:600">${esc(name)}</td>
-      <td style="padding:5px 6px;color:var(--muted);font-size:12px">${esc(split)}</td>
-      <td style="padding:5px 6px;text-align:right">${fmt$(budget)}</td>
-      <td style="padding:5px 6px;text-align:right;color:${actual > budget && budget > 0 ? 'var(--red)' : 'inherit'}">${fmt$(actual)}</td>
-      <td style="padding:5px 6px;text-align:right;font-weight:600;color:${variance >= 0 ? 'var(--green)' : 'var(--red)'}">
-        ${variance >= 0 ? '+' : '-'}${fmt$(Math.abs(variance))}</td>
+      <td style="padding:5px 6px;font-weight:600">${esc(e.name)}</td>
+      <td style="padding:5px 6px;color:var(--muted);font-size:12px">${esc(e.split)}</td>
+      <td style="padding:5px 6px;text-align:right">${fmt$(e.paidOut)}</td>
+      <td style="padding:5px 6px;text-align:right">${fmt$(e.charged)}</td>
+      <td style="padding:5px 6px;text-align:right;font-weight:600;color:${ok ? 'var(--green)' : 'var(--red)'}">
+        ${ok ? '✓' : (diff > 0 ? '+' : '-') + fmt$(Math.abs(diff))}</td>
     </tr>`;
   }).join('') || `<tr><td colspan="5" style="padding:8px;color:var(--muted)">No expense events yet</td></tr>`;
 
+  const chip = (label, value, sub, color) => `
+    <div style="background:var(--bg);border-radius:8px;padding:.6rem .8rem">
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">${label}</div>
+      <div style="font-size:20px;font-weight:700;color:${color}">${value}</div>
+      <div style="font-size:11px;color:var(--muted)">${sub}</div>
+    </div>`;
   document.getElementById('dash-events').innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:1rem">
-      <div style="background:var(--bg);border-radius:8px;padding:.6rem .8rem">
-        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Total Events</div>
-        <div style="font-size:20px;font-weight:700;color:var(--navy)">${evtRows.length}</div>
-        <div style="font-size:11px;color:var(--muted)">${nTournament}T · ${nPractice}P · ${nFundraiser}F</div>
-      </div>
-      <div style="background:var(--bg);border-radius:8px;padding:.6rem .8rem">
-        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Actual Spend</div>
-        <div style="font-size:20px;font-weight:700;color:${totalActual > totalBudget && totalBudget > 0 ? 'var(--red)' : 'var(--navy)'}">
-          ${fmt$(totalActual)}</div>
-        <div style="font-size:11px;color:var(--muted)">of ${fmt$(totalBudget)} budgeted</div>
-      </div>
-      <div style="background:var(--bg);border-radius:8px;padding:.6rem .8rem">
-        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Fundraised</div>
-        <div style="font-size:20px;font-weight:700;color:var(--green)">${fmt$(totalRaised)}</div>
-        <div style="font-size:11px;color:var(--muted)">${nFundraiser} fundraiser${nFundraiser !== 1 ? 's' : ''}</div>
-      </div>
+    <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:1rem">
+      ${chip('Total Spend', fmt$(totalSpend), plural(evtList.length, 'event', 'events'), 'var(--navy)')}
+      ${chip('Charged to Players', fmt$(totalCharged), Math.abs(totalCharged - totalSpend) < 1 ? 'Matches spend ✓' : fmt$(totalCharged - totalSpend) + ' vs spend',
+             Math.abs(totalCharged - totalSpend) < 1 ? 'var(--green)' : 'var(--red)')}
+      ${chip('Fundraised', fmt$(totalRaised), fmt$(fundLeft) + ' still available', 'var(--green)')}
     </div>
-    <div class="progress-wrap" style="margin-bottom:1rem">
-      <div class="progress-label"><span>Budget used</span><span>${budgetPct}%</span></div>
-      <div class="progress-track"><div class="progress-fill" style="width:${budgetPct}%;background:${budgetPct > 100 ? 'var(--red)' : 'var(--gold)'}"></div></div>
-    </div>
+    <div class="table-wrap">
     <table style="width:100%;font-size:13px;border-collapse:collapse">
       <thead><tr style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em;border-bottom:2px solid var(--border)">
         <th style="text-align:left;padding:4px 6px">Event</th>
         <th style="text-align:left;padding:4px 6px">Split</th>
-        <th style="text-align:right;padding:4px 6px">Budget</th>
-        <th style="text-align:right;padding:4px 6px">Actual</th>
-        <th style="text-align:right;padding:4px 6px">Variance</th>
+        <th style="text-align:right;padding:4px 6px">Paid Out</th>
+        <th style="text-align:right;padding:4px 6px">Charged</th>
+        <th style="text-align:right;padding:4px 6px">Diff</th>
       </tr></thead>
       <tbody>${expEvtTable}</tbody>
-    </table>`;
+    </table>
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin-top:.5rem">
+      Paid Out = expenses with someone in Paid By. A negative Diff usually means a cost line has nobody marked on Attendance.
+    </div>`;
 
-  // "Needs attention" alert strip — players with outstanding balance
-  const overdue = enriched.filter(p => p.net > 0.5).sort((a, b) => b.net - a.net);
+  // Open balances — who owes the team and who the team owes
   const alertCard = document.getElementById('dash-alert-card');
-  if (overdue.length > 0) {
+  if (owers.length || owed.length) {
     alertCard.style.display = 'block';
+    const chipList = (list, bg, border, color) => list.map(p => `
+      <div style="background:${bg};border:1px solid ${border};border-radius:8px;padding:6px 12px;font-size:13px">
+        <strong>${esc(p.name)}</strong>
+        <span style="color:${color};margin-left:8px;font-weight:600">${fmt$(Math.abs(p.net))}</span>
+      </div>`).join('') || '<div style="font-size:13px;color:var(--muted)">Nobody</div>';
+    const heading = text => `<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:.5rem 0 .4rem">${text}</div>`;
     document.getElementById('dash-alert-list').innerHTML = `
-      <div style="display:flex;flex-wrap:wrap;gap:8px;padding-top:.25rem">
-        ${overdue.map(p => `
-          <div style="background:#fff0f0;border:1px solid #fca5a5;border-radius:8px;padding:6px 12px;font-size:13px">
-            <strong>${esc(p.name)}</strong>
-            <span style="color:var(--red);margin-left:8px;font-weight:600">${fmt$(p.net)}</span>
-          </div>`).join('')}
-      </div>`;
+      ${heading(`Owes the team · ${owers.length}`)}
+      <div style="display:flex;flex-wrap:wrap;gap:8px">${chipList(owers, '#fff0f0', '#fca5a5', 'var(--red)')}</div>
+      ${heading(`Team owes · ${owed.length}`)}
+      <div style="display:flex;flex-wrap:wrap;gap:8px">${chipList(owed, '#f0f7ff', '#93c5fd', 'var(--navy)')}</div>`;
   } else {
     alertCard.style.display = 'none';
   }
 
   // Full balance table — sorted highest owed first
   enriched.sort((a, b) => b.net - a.net);
+  const dim = v => nz(v) ? fmt$(v) : '<span style="color:var(--muted)">—</span>';
   let balHtml = '';
   enriched.forEach(p => {
-    const settled  = Math.abs(p.net) < 0.5;
-    const owes     = p.net > 0.5;
+    const settled  = isSettled(p);
+    const owes     = p.net > 0;
     const rowStyle = settled ? '' : owes ? 'background:#fff8f8' : 'background:#f0f7ff';
+    const badge    = settled
+      ? `<span class="badge badge-green">${nz(p.net) ? 'Settled (small)' : 'Settled'}</span>`
+      : owes ? '<span class="badge badge-red">Owes team</span>' : '<span class="badge badge-blue">Team owes</span>';
     balHtml += `<tr style="${rowStyle}">
       <td><strong>${esc(p.name)}</strong></td>
       <td><span class="badge badge-navy">${esc(p.role)}</span></td>
-      <td>${fmt$(p.charged)}</td>
-      <td>${fmt$(p.paid)}</td>
-      <td style="font-weight:700;color:${settled ? 'var(--green)' : owes ? 'var(--red)' : 'var(--navy)'}">
-        ${settled ? '—' : (owes ? '+' : '-') + fmt$(Math.abs(p.net))}
+      <td>${dim(p.charged)}</td>
+      <td>${dim(p.paid)}</td>
+      <td>${dim(p.upfront)}</td>
+      <td>${dim(p.credit)}</td>
+      <td>${dim(p.collected + p.reimb)}</td>
+      <td style="font-weight:700;color:${settled ? 'var(--muted)' : owes ? 'var(--red)' : 'var(--navy)'}">
+        ${nz(p.net) ? (owes ? '+' : '-') + fmt$(Math.abs(p.net)) : '—'}
       </td>
-      <td>${statusBadge(p.status)}</td>
+      <td>${badge}</td>
     </tr>`;
   });
-  if (!balHtml) balHtml = '<tr class="empty-row"><td colspan="6">No balance data</td></tr>';
+  if (!balHtml) balHtml = '<tr class="empty-row"><td colspan="9">No balance data</td></tr>';
   document.getElementById('dash-balances-tbody').innerHTML = balHtml;
 }
 
