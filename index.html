@@ -874,7 +874,6 @@ function buildUpfrontMap() {
 }
 // Payments that make up "Total paid" — mirrors the Player Balances "Total Paid ($)"
 // formula (SUMIFS of Type = "Income" where Paid By = player, case-insensitive).
-const DUES_SECTION_BETA_USERS = ['jake murray', 'rachel graber'];
 function getPaidRowsFor(name) {
   return getTxRows().filter(tx =>
     String(tx['Type'] || Object.values(tx)[3] || '').trim() === 'Income' &&
@@ -1138,10 +1137,10 @@ function renderMyBalance() {
     creditCard.remove();
   }
 
-  // Dues payments table (beta) — rendered inside the Payment Progress card; itemizes the payments behind the "Total paid" figure
+  // Dues payments table — rendered inside the Payment Progress card; itemizes the payments behind the "Total paid" figure
   const oldDuesCard = document.getElementById('mybalance-dues-card');
   if (oldDuesCard) oldDuesCard.remove();
-  if (DUES_SECTION_BETA_USERS.includes(String(USER.name || '').trim().toLowerCase())) {
+  {
     const amtOf = tx => parseFloat(tx['Amount ($)'] || Object.values(tx)[5]) || 0;
     const dateOf = tx => tx['Date'] || Object.values(tx)[0];
     const paidTx = getPaidRowsFor(USER.name).slice().sort((a, b) => {
