@@ -1138,14 +1138,10 @@ function renderMyBalance() {
     creditCard.remove();
   }
 
-  // Dues Paid card (beta, sits directly under Payment Progress) — itemizes the payments behind the "Total paid" figure
-  let duesCard = document.getElementById('mybalance-dues-card');
+  // Dues payments table (beta) — rendered inside the Payment Progress card; itemizes the payments behind the "Total paid" figure
+  const oldDuesCard = document.getElementById('mybalance-dues-card');
+  if (oldDuesCard) oldDuesCard.remove();
   if (DUES_SECTION_BETA_USERS.includes(String(USER.name || '').trim().toLowerCase())) {
-    if (!duesCard) {
-      duesCard = document.createElement('div');
-      duesCard.id = 'mybalance-dues-card';
-      section.insertBefore(duesCard, progCard.nextSibling);
-    }
     const amtOf = tx => parseFloat(tx['Amount ($)'] || Object.values(tx)[5]) || 0;
     const dateOf = tx => tx['Date'] || Object.values(tx)[0];
     const paidTx = getPaidRowsFor(USER.name).slice().sort((a, b) => {
@@ -1162,18 +1158,17 @@ function renderMyBalance() {
     }).join('') || '<tr class="empty-row"><td colspan="3">No payments recorded yet</td></tr>';
     const diffHtml = Math.abs(diff) >= 0.01
       ? `<tr><td></td><td style="color:var(--muted);font-size:12px">Adjustment (not itemized)</td><td style="font-weight:600">${fmt$(diff)}</td></tr>` : '';
-    duesCard.innerHTML = `
-      <div class="card">
-        <div class="card-title">💵 Dues Paid</div>
+    const progInner = progCard.querySelector('.card') || progCard;
+    progInner.insertAdjacentHTML('beforeend', `
+      <div id="mybalance-dues-table" style="margin-top:14px">
+        <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin-bottom:6px">Payments</div>
         <div class="table-wrap">
           <table><thead><tr><th>Date</th><th>Description</th><th>Amount</th></tr></thead>
           <tbody>${rowsHtml}${diffHtml}
             <tr style="background:var(--navy-light)"><td></td><td style="font-weight:700;color:var(--navy)">Total paid</td><td style="font-weight:700;color:var(--navy)">${fmt$(totalPaid)}</td></tr>
           </tbody></table>
         </div>
-      </div>`;
-  } else if (duesCard) {
-    duesCard.remove();
+      </div>`);
   }
 }
 
