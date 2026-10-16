@@ -432,7 +432,7 @@ const fmtDate = v => {
   if (typeof v === 'number') {
     // Excel serial date
     const d = new Date(Math.round((v - 25569) * 86400 * 1000));
-    return d.toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'});
+    return d.toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric', timeZone:'UTC'}); // serials are UTC midnight
   }
   return String(v);
 };
@@ -874,7 +874,7 @@ function buildUpfrontMap() {
 }
 // Payments that make up "Total paid" — mirrors the Player Balances "Total Paid ($)"
 // formula (SUMIFS of Type = "Income" where Paid By = player, case-insensitive).
-const DUES_SECTION_BETA_USERS = ['jake murray'];
+const DUES_SECTION_BETA_USERS = ['jake murray', 'rachel graber'];
 function getPaidRowsFor(name) {
   return getTxRows().filter(tx =>
     String(tx['Type'] || Object.values(tx)[3] || '').trim() === 'Income' &&
@@ -1138,13 +1138,13 @@ function renderMyBalance() {
     creditCard.remove();
   }
 
-  // Dues Paid card (beta) — itemizes the payments behind the "Total paid" figure
+  // Dues Paid card (beta, sits directly under Payment Progress) — itemizes the payments behind the "Total paid" figure
   let duesCard = document.getElementById('mybalance-dues-card');
   if (DUES_SECTION_BETA_USERS.includes(String(USER.name || '').trim().toLowerCase())) {
     if (!duesCard) {
       duesCard = document.createElement('div');
       duesCard.id = 'mybalance-dues-card';
-      section.insertBefore(duesCard, eventsCard.nextSibling);
+      section.insertBefore(duesCard, progCard.nextSibling);
     }
     const amtOf = tx => parseFloat(tx['Amount ($)'] || Object.values(tx)[5]) || 0;
     const dateOf = tx => tx['Date'] || Object.values(tx)[0];
@@ -1158,7 +1158,7 @@ function renderMyBalance() {
     const rowsHtml = paidTx.map(tx => {
       const d = dateOf(tx);
       const desc = String(tx['Description'] || Object.values(tx)[1] || '').trim();
-      return `<tr><td>${d ? esc(typeof d === 'number' ? new Date(Math.round((d - 25569) * 86400 * 1000)).toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric', timeZone:'UTC'}) : fmtDate(d)) : '<span style="color:var(--muted)">No date</span>'}</td><td>${esc(desc)}</td><td style="font-weight:600;color:var(--green)">${fmt$(amtOf(tx))}</td></tr>`;
+      return `<tr><td>${d ? esc(fmtDate(d)) : '<span style="color:var(--muted)">No date</span>'}</td><td>${esc(desc)}</td><td style="font-weight:600;color:var(--green)">${fmt$(amtOf(tx))}</td></tr>`;
     }).join('') || '<tr class="empty-row"><td colspan="3">No payments recorded yet</td></tr>';
     const diffHtml = Math.abs(diff) >= 0.01
       ? `<tr><td></td><td style="color:var(--muted);font-size:12px">Adjustment (not itemized)</td><td style="font-weight:600">${fmt$(diff)}</td></tr>` : '';
