@@ -1387,7 +1387,7 @@ function renderTransactions() {
       <td>${esc(date)}</td><td>${esc(desc)}</td>
       <td><span class="badge badge-navy">${esc(cat)}</span></td>
       <td><span class="badge ${type==='Income'?'badge-green':type==='Fundraiser'?'badge-gold':type==='Credit'?'badge-blue':'badge-red'}">${esc(type)}</span></td>
-      <td style="font-weight:600;color:${type==='Expense'?'var(--red)':type==='Credit'?'var(--navy)':'var(--green)'}">${type==='Expense'||type==='Credit'?'-':'+'}${fmt$(amt)}</td>
+      <td style="font-weight:600;color:${type==='Expense'?'var(--red)':type==='Credit'?'var(--navy)':'var(--green)'}">${(type==='Expense'||type==='Credit') === (amt>=0)?'-':'+'}${fmt$(Math.abs(amt))}</td>
       <td>${statusBadge(stat)}</td>
     </tr>`;
   });
