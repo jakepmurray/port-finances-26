@@ -1690,19 +1690,42 @@ function renderDashboard() {
 
   // ── Settle-up reconciliation (exact — ignores the small-balance filter) ──
   // Every net balance is charged − paid − upfront − credits + held + reimb, so
-  // (owed to team − team owes) splits exactly into these pieces. With nothing
-  // off, the only gap left is credits, which fundraising covers.
+  // (owed to team − team owes) splits exactly into these pieces.
+  // Credits used to be the only expected gap: fundraising covered them, but
+  // nothing came off a player's balance to match. Those credits are now offset
+  // on the holder's balance (Jake holds the fundraising cash), so a clean set
+  // of books has a ~$0 settlement gap. Transfers between people, and amounts
+  // Jake covered personally, cancel out of the gap; anything truly unfunded,
+  // uncharged, or unheld still shows up here.
   const sum = k => enriched.reduce((s, p) => s + p[k], 0);
   const exactOwed  = enriched.reduce((s, p) => p.net > 0 ? s + p.net : s, 0);
   const exactOwes  = enriched.reduce((s, p) => p.net < 0 ? s - p.net : s, 0);
   const gap        = exactOwed - exactOwes;
   const creditPart = -(sum('credit') - sum('adjust'));
   const adjustPart = -sum('adjust');
+  // Fundraising-cash offsets: Adjustment rows that debit the person holding
+  // the fundraising money (Paid By and Reimbursed To are the same person, and
+  // the description mentions fundraising). These are the funding side of the
+  // Credit rows, not unfunded spending.
+  const fundOffsetRows = txRows.filter(r => {
+    if (txType(r) !== 'Adjustment') return false;
+    const paid  = r['Paid By']       || Object.values(r)[4];
+    const reimb = r['Reimbursed To'] || Object.values(r)[7];
+    const desc  = String(r['Description'] || Object.values(r)[1] || '');
+    return namesMatch(paid, reimb) && String(paid || '').trim() !== '' && /fundrais/i.test(desc);
+  });
+  const fundOffsetPart  = -sumAmt(fundOffsetRows);
+  const otherAdjustPart = adjustPart - fundOffsetPart;
+  const fundHolders = [...new Set(fundOffsetRows.map(r =>
+    String(r['Paid By'] || Object.values(r)[4] || '').trim()
+  ).filter(Boolean))];
+  const fundHolderShort = fundHolders.length === 1 ? fundHolders[0].split(' ')[0] : 'the treasurer';
   const costPart   = sum('charged') - sum('upfront');
   const unheldPart = -(sum('paid') - sum('collected'));
   const reimbPart  = sum('reimb');
   const otherPart  = gap - (creditPart + adjustPart + costPart + unheldPart + reimbPart);
-  const unexplained = gap - creditPart;
+  // Expected gap is ~0 once fundraising credits are offset on the holder's balance.
+  const unexplained = gap;
   const balanced    = Math.abs(unexplained) < 1;
 
   // Income rows that count toward someone's "paid" but have no holder recorded
@@ -1723,7 +1746,7 @@ function renderDashboard() {
     <div class="stat-card">
       <div class="stat-label">Settle-Up Check</div>
       <div class="stat-value ${balanced ? 'green' : 'red'}">${balanced ? 'Balanced ✓' : 'Off ' + fmt$(Math.abs(unexplained))}</div>
-      <div class="stat-sub">${balanced ? 'Only fundraising credits left' : 'See breakdown below'}</div>
+      <div class="stat-sub">${balanced ? 'Dues come out even' : 'See breakdown below'}</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">Fundraising Available</div>
@@ -1780,11 +1803,20 @@ function renderDashboard() {
     <div class="recon-row"><span>Team owes players</span><span style="font-weight:600;color:var(--navy)">-${fmt$(exactOwes)}</span></div>
     <div class="recon-row" style="border-bottom:2px solid var(--border)">
       <strong>If everyone settled up today</strong>
-      <strong style="color:${gap >= 0 ? 'var(--green)' : 'var(--red)'}">${fmt$(gap)}</strong>
+      <strong style="color:${Math.abs(gap) < 0.005 || gap >= 0 ? 'var(--green)' : 'var(--red)'}">${fmt$(Math.abs(gap) < 0.005 ? 0 : gap)}</strong>
     </div>
     <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:.9rem 0 .25rem">Where that comes from</div>`;
   reconHtml += reconLine(true, 'Credits paid from fundraising', creditPart, 'Expected — fundraising money covers these');
-  if (nz(adjustPart)) reconHtml += reconLine(false, 'Adjustments', adjustPart, 'No funding source — the team absorbs these');
+  if (nz(fundOffsetPart)) reconHtml += reconLine(true, 'Fundraising cash applied (' + fundHolderShort + ' holds it)', fundOffsetPart,
+                                     'Expected — these credits come off the team\'s balance with ' + fundHolderShort + ', who holds the fundraising money');
+  // Other adjustments are transfers (donations, personal coverage) when they
+  // net out with credits and fundraising offsets. A leftover amount with no
+  // counterpart is unfunded and gets flagged.
+  const otherAdjustOk = Math.abs(creditPart + adjustPart) < 1;
+  if (nz(otherAdjustPart)) reconHtml += reconLine(otherAdjustOk, 'Other adjustments', otherAdjustPart,
+                                     otherAdjustOk
+                                       ? 'Transfers between players, or amounts covered personally — they net out of the settlement gap'
+                                       : 'No funding source — the team absorbs these');
   if (nz(costPart))   reconHtml += reconLine(false, costPart < 0 ? 'Costs not charged to players' : 'Charged more than was paid', costPart,
                                      'Paid out vs. charged — see Cost by Event');
   if (nz(unheldPart)) reconHtml += reconLine(false, 'Payments with no holder', unheldPart,
@@ -1794,10 +1826,10 @@ function renderDashboard() {
   if (Math.abs(otherPart) >= 0.01) reconHtml += reconLine(false, 'Other / rounding', otherPart, '');
   reconHtml += balanced
     ? `<div style="margin-top:1rem;padding:.75rem 1rem;border-radius:8px;background:#f0fdf4;color:var(--green);font-size:13px;font-weight:600">
-         ✓ Balanced — once everyone settles, the only gap is fundraising credits. ${fmt$(fundLeft)} of fundraising money would be left.
+         ✓ Balanced — once everyone settles, dues money comes out even. ${fmt$(fundLeft)} of fundraising money would be left.
        </div>`
     : `<div style="margin-top:1rem;padding:.75rem 1rem;border-radius:8px;background:#fff0f0;color:var(--red);font-size:13px">
-         <strong>${unexplained < 0 ? 'Short' : 'Over'} ${fmt$(Math.abs(unexplained))}</strong> beyond fundraising credits.
+         <strong>${unexplained < 0 ? 'Short' : 'Over'} ${fmt$(Math.abs(unexplained))}</strong> once everyone settles.
          ${unexplained < 0
            ? `If it isn't fixed, it comes out of fundraising money, leaving ${fmt$(fundLeft + unexplained)} instead of ${fmt$(fundLeft)}.`
            : `The team would end up with ${fmt$(unexplained)} more than it needs.`}
